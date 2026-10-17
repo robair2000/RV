@@ -42,7 +42,9 @@ base_features = [
 ]
 
 optional_features = [
-    'MACD_hist', 'ADX', 'CMF', 'ATR_percentile', 'regime_score', 'smc_zone_dist', 'lorentzian_dist'
+    'MACD_hist', 'ADX', 'CMF', 'ATR_percentile', 'regime_score', 'smc_zone_dist',
+    'lorentzian_dist', 'funding_rate', 'oi_change', 'oi_ratio',
+    'bid_ask_imbalance', 'book_pressure', 'taker_buy_ratio', 'btc_trend_gap'
 ]
 
 MODEL_NAMES = ['xgb', 'cat', 'rf']
@@ -59,8 +61,59 @@ TP_ATR_MULT = 2.5
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
-# --- CENTRALE EXCHANGE INSTANTIE VOOR RATE LIMITING (spot-data voor candles) ---
+# --- CENTRALE EXCHANGE INSTANTIE VOOR RATE LIMITING ---
 exchange = ccxt.kucoin({'enableRateLimit': True})
+
+
+# =====================================================================
+# HELPERS VOOR DATA & CONTEXT (KUCOIN API OPHALEN)
+# =====================================================================
+def safe_div(num, den):
+    if den is None or pd.isna(den) or abs(float(den)) < 1e-12:
+        return 0.0
+    return float(num) / float(den)
+
+def as_float(x, default=0.0):
+    try:
+        return float(x) if x is not None and not pd.isna(x) else default
+    except Exception:
+        return default
+
+def fetch_market_context_from_exchange(exch, symbol):
+    """Haalt live funding rate, open interest en orderboek op via de KuCoin API."""
+    funding = 0.0
+    oi_data = None
+    orderbook = None
+    
+    # Probeer swap/futures symbool formaat voor api-aanroepen (bijv. BTC/USDT:USDT of BTC/USDT)
+    swap_symbol = f"{symbol}:USDT" if not symbol.endswith(":USDT") else symbol
+
+    try:
+        fr = exch.fetch_funding_rate(swap_symbol)
+        if fr and 'fundingRate' in fr:
+            funding = float(fr['fundingRate'])
+    except Exception:
+        try:
+            fr = exch.fetch_funding_rate(symbol)
+            if fr and 'fundingRate' in fr:
+                funding = float(fr['fundingRate'])
+        except Exception:
+            pass
+
+    try:
+        oi = exch.fetch_open_interest(swap_symbol)
+        if oi and 'openInterest' in oi:
+            val = float(oi['openInterest'])
+            oi_data = {'change': [val]*500, 'ratio': [1.0]*500}
+    except Exception:
+        pass
+
+    try:
+        orderbook = exch.fetch_order_book(symbol, limit=20)
+    except Exception:
+        pass
+
+    return funding, oi_data, orderbook
 
 
 # =====================================================================
@@ -79,13 +132,13 @@ def default_state():
         'last_trained_timestamp': 0,
         'model_weights': {m: 1.0 / len(MODEL_NAMES) for m in MODEL_NAMES},
         'model_errors': {m: None for m in MODEL_NAMES},
-        'baseline_error': None,   # holdout-skill van de huidige config (lager = beter, <1 = beter dan "geen beweging")
+        'baseline_error': None,
         'last_prediction': None,
         'last_prediction_price': None,
         'predicted_return_pct': 0.0,
-        'direction_probability': 50.0,   # kans op STIJGING in %
-        'signal': 'none',                # 'long' | 'short' | 'none'
-        'signal_probability': 50.0,      # kans in % dat de richting van het signaal klopt
+        'direction_probability': 50.0,
+        'signal': 'none',
+        'signal_probability': 50.0,
         'holdout_direction_accuracy': None,
         'holdout_classifier_accuracy': None,
         'holdout_samples': 0,
@@ -111,11 +164,9 @@ def load_or_init_state(state_file):
         except Exception:
             pass
 
-    # State uit een oude versie (geen data_status): direct opnieuw trainen i.p.v. wachten op min_interval
     if state.get('data_status') in (None, 'new'):
         state['last_trained_timestamp'] = 0
 
-    # Oude/ontbrekende velden herstellen
     if not isinstance(state.get('regime_features'), dict):
         state['regime_features'] = {}
     for reg in ('trending', 'sideways'):
@@ -132,7 +183,6 @@ def load_or_init_state(state_file):
         v = state['model_errors'].get(m)
         if not isinstance(v, (int, float)) or not math.isfinite(v):
             state['model_errors'][m] = None
-    # Verouderde velden uit eerdere versies (foutmaat was niet vergelijkbaar met nieuwe validatie)
     for legacy in ('search_direction', 'max_depth', 'n_estimators',
                    'previous_learning_rate', 'previous_max_depth'):
         state.pop(legacy, None)
@@ -143,7 +193,6 @@ def load_or_init_state(state_file):
 
 
 def _json_safe(obj):
-    """Vervangt NaN/inf door None zodat het bestand geldige JSON is."""
     if isinstance(obj, dict):
         return {k: _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -180,7 +229,6 @@ def fetch_data_safely(symbol, tf_info):
 
 
 def compute_features(df):
-    """Berekent alle indicatoren. Verwacht kolommen open/high/low/close/volume."""
     df = df.copy()
     close = df['close']
 
@@ -216,7 +264,6 @@ def compute_features(df):
     df['OBV'] = (np.sign(close.diff()) * df['volume']).fillna(0).cumsum()
     df['OBV_slope'] = df['OBV'].diff() / (df['volume'].rolling(20).mean() + 1e-8)
 
-    # Rolling VWAP (20 candles) i.p.v. cumulatief over het hele venster
     typical_price = (df['high'] + df['low'] + close) / 3
     vwap = (typical_price * df['volume']).rolling(20).sum() / (df['volume'].rolling(20).sum() + 1e-8)
     df['VWAP_dist'] = (close - vwap) / (vwap + 1e-8)
@@ -255,7 +302,6 @@ def compute_features(df):
     macd_signal = macd_line.ewm(span=9, adjust=False).mean()
     df['MACD_hist'] = macd_line - macd_signal
 
-    # ADX (correcte +DM / -DM definitie)
     up_move = df['high'].diff()
     down_move = -df['low'].diff()
     plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
@@ -270,7 +316,6 @@ def compute_features(df):
     df['CMF'] = (mf_multiplier * df['volume']).rolling(window=20).sum() / (df['volume'].rolling(20).sum() + 1e-8)
 
     df['ATR_percentile'] = df['ATR'].rolling(window=100).apply(lambda x: (x <= x[-1]).mean(), raw=True)
-
     df['regime_score'] = (df['ADX'] / 100.0) * (1.0 - df['atr_ratio'] / (df['atr_ratio'].rolling(20).mean() + 1e-8))
 
     body_size = (close - df['open']).abs()
@@ -284,6 +329,43 @@ def compute_features(df):
     df['lorentzian_dist'] = (close - mid_range) / (rolling_max - rolling_min + 1e-8)
 
     return df.replace([np.inf, -np.inf], np.nan)
+
+
+def enrich_market_context(df, funding=None, oi=None, orderbook=None, btc_ref=None):
+    out = df.copy()
+    out['funding_rate'] = pd.Series(funding, index=out.index) if funding is not None else 0.0
+
+    if oi is not None:
+        out['oi_change'] = pd.Series(oi.get('change', [0.0] * len(out)), index=out.index)
+        out['oi_ratio'] = pd.Series(oi.get('ratio', [0.0] * len(out)), index=out.index)
+    else:
+        out['oi_change'] = 0.0
+        out['oi_ratio'] = 0.0
+
+    if orderbook is not None:
+        bids = orderbook.get('bids', [])
+        asks = orderbook.get('asks', [])
+        if bids and asks:
+            best_bid = float(bids[0][0])
+            best_ask = float(asks[0][0])
+            total_bid = sum(float(x[1]) for x in bids[:10])
+            total_ask = sum(float(x[1]) for x in asks[:10])
+            out['bid_ask_imbalance'] = (best_bid - best_ask) / (best_ask + 1e-8)
+            out['book_pressure'] = (total_bid - total_ask) / (total_bid + total_ask + 1e-8)
+        else:
+            out['bid_ask_imbalance'] = 0.0
+            out['book_pressure'] = 0.0
+    else:
+        out['bid_ask_imbalance'] = 0.0
+        out['book_pressure'] = 0.0
+
+    out['taker_buy_ratio'] = 0.0
+    if btc_ref is not None and 'close' in btc_ref.columns:
+        out['btc_trend_gap'] = out['close'].pct_change().fillna(0.0) - btc_ref['close'].pct_change().fillna(0.0)
+    else:
+        out['btc_trend_gap'] = 0.0
+
+    return out
 
 
 def get_market_regime(df):
@@ -316,57 +398,103 @@ def usable_features(df, feats):
 
 
 def build_dataset(df, feats, lookback):
-    """
-    Target = rendement van de VOLGENDE candle (close[t+1]/close[t] - 1), niet de absolute prijs.
-    De laatste rij heeft nog geen label en wordt gebruikt als voorspel-input.
-    """
-    d = df.dropna(subset=feats + ['close']).reset_index(drop=True)
-    if len(d) < 3:
+    df = df.copy()
+    if df.empty:
         return None
-    latest = d[feats].iloc[[-1]]
-    ret = (d['close'].shift(-1) / d['close'] - 1.0).iloc[:-1]
-    X = d[feats].iloc[:-1]
-    X, ret = X.iloc[-lookback:], ret.iloc[-lookback:]
-    return X, ret, latest
+
+    valid = [f for f in feats if f in df.columns]
+    if len(valid) < 3:
+        return None
+
+    df = df.reset_index(drop=True)
+    X = []
+    y = []
+
+    for i in range(lookback, len(df) - 1):
+        row = df.iloc[i]
+        window = df.iloc[i-lookback:i]
+        if window.empty:
+            continue
+
+        if not all(pd.notna(window[col]).all() for col in valid):
+            continue
+
+        X.append(window[valid].iloc[-1].to_numpy(dtype=float))
+        
+        entry = as_float(row.get('close'), 0.0)
+        atr = as_float(row.get('ATR'), 0.0)
+        if entry == 0 or atr <= 0:
+            y.append(0)
+            continue
+
+        future = df.iloc[i+1:i+21]
+        if future.empty:
+            y.append(0)
+            continue
+
+        hp = future['high'].max()
+        lp = future['low'].min()
+
+        tp = entry + (TP_ATR_MULT * atr)
+        sl = entry - (SL_ATR_MULT * atr)
+
+        if hp >= tp and lp <= sl:
+            y.append(0)
+        elif hp >= tp:
+            y.append(1)
+        elif lp <= sl:
+            y.append(-1)
+        else:
+            y.append(0)
+
+    if not X:
+        return None
+
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=int)
+    latest = df.iloc[-1][valid].to_numpy(dtype=float)
+    return X, y, latest
 
 
 def evaluate_config(X, y, lr):
-    """Out-of-sample test: train op het begin, test op de laatste candles. Geeft metrics en modelgewichten."""
     n = len(X)
     h = max(MIN_HOLDOUT, int(n * HOLDOUT_FRACTION))
     if n - h < MIN_TRAIN_ROWS:
         return None
-    Xtr, Xte, ytr, yte = X.iloc[:-h], X.iloc[-h:], y.iloc[:-h], y.iloc[-h:]
+    Xtr, Xte, ytr, yte = X.iloc[:-h] if hasattr(X, 'iloc') else X[:-h], X.iloc[-h:] if hasattr(X, 'iloc') else X[-h:], y[:-h], y[-h:]
 
     preds, maes = {}, {}
     for name, model in make_regressors(lr).items():
         model.fit(Xtr, ytr)
         p = np.asarray(model.predict(Xte), dtype=float)
         preds[name] = p
-        maes[name] = float(np.mean(np.abs(p - yte.to_numpy())))
+        maes[name] = float(np.mean(np.abs(p - yte)))
 
     inv = {k: 1.0 / (v + 1e-9) for k, v in maes.items()}
     tot = sum(inv.values())
     weights = {k: float(v / tot) for k, v in inv.items()}
 
     ens = sum(weights[k] * preds[k] for k in preds)
-    y_arr = yte.to_numpy()
+    y_arr = np.asarray(yte)
     ens_mae = float(np.mean(np.abs(ens - y_arr)))
     zero_mae = float(np.mean(np.abs(y_arr))) + 1e-12
     dir_acc = float(np.mean(np.sign(ens) == np.sign(y_arr)))
 
     clf_acc = None
     ytr_c = (ytr > 0).astype(int)
-    if ytr_c.nunique() == 2:
-        clf = make_classifier(lr)
-        clf.fit(Xtr, ytr_c)
-        p_up = clf.predict_proba(Xte)[:, 1]
-        clf_acc = float(np.mean((p_up > 0.5) == (y_arr > 0)))
+    if len(np.unique(ytr_c)) == 2:
+        try:
+            clf = make_classifier(lr)
+            clf.fit(Xtr, ytr_c)
+            p_up = clf.predict_proba(Xte)[:, 1]
+            clf_acc = float(np.mean((p_up > 0.5) == (y_arr > 0)))
+        except Exception:
+            pass
 
     return {
         'weights': weights,
         'maes': maes,
-        'skill': ens_mae / zero_mae,     # <1 = beter dan "prijs blijft gelijk"
+        'skill': ens_mae / zero_mae,
         'dir_acc': dir_acc,
         'clf_acc': clf_acc,
         'holdout_n': int(h),
@@ -374,7 +502,6 @@ def evaluate_config(X, y, lr):
 
 
 def mutate_config(cfg, regime):
-    """Stelt een kleine, willekeurige wijziging voor. Wordt alleen overgenomen als die out-of-sample beter scoort."""
     new = copy.deepcopy(cfg)
     new['learning_rate'] = float(np.clip(cfg['learning_rate'] + np.random.choice([-0.01, 0.01]), 0.01, 0.15))
     new['lookback_window'] = int(np.clip(cfg['lookback_window'] + np.random.choice([-20, 20]), 60, 300))
@@ -406,7 +533,7 @@ def score_config(df, cfg):
 
 
 # =====================================================================
-# EEN RUN VOOR 1 ASSET/TIMEFRAME
+# EEN RUN VOOR 1 ASSET/TIMEFRAME (INCL. KUCOIN API OPHAALDATA)
 # =====================================================================
 def _insufficient(state, now):
     state.update({'data_status': 'insufficient_data', 'signal': 'none', 'signal_probability': 50.0,
@@ -415,17 +542,18 @@ def _insufficient(state, now):
     return state
 
 
-def process(df_raw, state, now):
-    """
-    Neemt ruwe candles (incl. de nog lopende candle), traint en voorspelt de volgende candle.
-    Retourneert (state, ok).
-    """
-    # De laatste candle is nog niet afgesloten -> weglaten (anders is de laatste label/feature onbetrouwbaar)
+def process(df_raw, state, now, symbol):
     df_raw = df_raw.iloc[:-1].reset_index(drop=True)
     if len(df_raw) < 60:
         return _insufficient(state, now), False
 
     df = compute_features(df_raw)
+    
+    # --- HIER WORDEN LIVE MARKTDATA EN API-CONTEXT OPGEHAALD ---
+    funding, oi, ob = fetch_market_context_from_exchange(exchange, symbol)
+    df = enrich_market_context(df, funding=funding, oi=oi, orderbook=ob)
+    # ------------------------------------------------------------
+
     regime = get_market_regime(df)
     state['current_regime'] = regime
 
@@ -439,7 +567,6 @@ def process(df_raw, state, now):
     cand_cfg = mutate_config(best_cfg, regime)
     cand_res = score_config(df, cand_cfg)
 
-    # Een mutatie wordt alleen overgenomen als hij op DEZELFDE holdout beter presteert
     chosen_cfg, chosen_res = best_cfg, best_res
     if cand_res is not None and (best_res is None or cand_res['skill'] < best_res['skill']):
         chosen_cfg, chosen_res = cand_cfg, cand_res
@@ -450,24 +577,27 @@ def process(df_raw, state, now):
         return _insufficient(state, now), False
 
     feats = chosen_res['features_used']
-    X, y, latest = build_dataset(df, feats, chosen_cfg['lookback_window'])
+    ds = build_dataset(df, feats, chosen_cfg['lookback_window'])
+    if ds is None:
+        return _insufficient(state, now), False
+
+    X, y, latest = ds
     lr = chosen_cfg['learning_rate']
     weights = chosen_res['weights']
 
-    # Finale fit op alle gelabelde data met de gekozen config
     pred_ret = {}
     for name, model in make_regressors(lr).items():
         model.fit(X, y)
-        pred_ret[name] = float(model.predict(latest)[0])
+        pred_ret[name] = float(model.predict(latest.reshape(1, -1))[0])
     ens_ret = float(sum(weights[k] * pred_ret[k] for k in pred_ret))
 
     prob_up = 50.0
     y_cls = (y > 0).astype(int)
-    if y_cls.nunique() == 2:
+    if len(np.unique(y_cls)) == 2:
         try:
             clf = make_classifier(lr)
             clf.fit(X, y_cls)
-            prob_up = float(clf.predict_proba(latest)[0][1] * 100)
+            prob_up = float(clf.predict_proba(latest.reshape(1, -1))[0][1] * 100)
         except Exception:
             prob_up = 50.0
 
@@ -482,12 +612,10 @@ def process(df_raw, state, now):
     elif (not reg_up) and (not clf_up):
         signal, sig_prob = 'short', 100.0 - prob_up
     else:
-        signal, sig_prob = 'none', 50.0     # regressie en classifier spreken elkaar tegen
+        signal, sig_prob = 'none', 50.0
 
     sign = 1 if reg_up else -1
 
-    # Convert the per-model MAEs (which are in return units, e.g. 0.0045 = 0.45%)
-    # to percent and USD so the UI can show both.
     maes_returns = chosen_res.get('maes', {}) if chosen_res else {}
     model_errors_returns = {}
     model_errors_pct = {}
@@ -498,14 +626,10 @@ def process(df_raw, state, now):
             model_errors_pct[k] = None
             model_errors_usd[k] = None
         else:
-            # raw return MAE
             model_errors_returns[k] = float(v)
-            # percent (0.45 -> 0.45%)
             model_errors_pct[k] = float(v * 100.0)
-            # approximate USD error at the last close price
             model_errors_usd[k] = float(v * last_close)
 
-    # Optionally keep a human-readable combined dict if your UI prefers strings:
     model_errors_readable = {
         k: f"{model_errors_usd.get(k):.2f} USD ({model_errors_pct.get(k):.2f}%)"
         if model_errors_usd.get(k) is not None else None
@@ -517,9 +641,7 @@ def process(df_raw, state, now):
         'lookback_window': chosen_cfg['lookback_window'],
         'active_features': feats,
         'model_weights': weights,
-        # keep the raw returns MAE for backwards compatibility
         'model_errors': model_errors_returns,
-        # new keys for the UI
         'model_errors_pct': model_errors_pct,
         'model_errors_usd': model_errors_usd,
         'model_errors_readable': model_errors_readable,
@@ -528,15 +650,14 @@ def process(df_raw, state, now):
         'holdout_classifier_accuracy': chosen_res['clf_acc'],
         'holdout_samples': chosen_res['holdout_n'],
         'last_close': last_close,
-        'last_prediction': last_close * (1.0 + ens_ret),
-        'last_prediction_price': last_close * (1.0 + ens_ret),
+        'last_prediction': last_close * (1.0 + (ens_ret / 100.0)),
+        'last_prediction_price': last_close * (1.0 + (ens_ret / 100.0)),
         'predicted_return_pct': ens_ret * 100.0,
         'direction_probability': prob_up,
         'signal': signal,
         'signal_probability': sig_prob,
         'atr': atr,
         'atr_pct': atr / last_close * 100.0,
-        # Alleen een SL/TP als er een eenduidig signaal is; anders suggereert het een richting die er niet is
         'stop_loss': (last_close - sign * SL_ATR_MULT * atr) if signal != 'none' else 0.0,
         'take_profit': (last_close + sign * TP_ATR_MULT * atr) if signal != 'none' else 0.0,
         'last_candle_ts': int(pd.Timestamp(df['Date'].iloc[-1]).timestamp()) if 'Date' in df else 0,
@@ -549,7 +670,7 @@ def process(df_raw, state, now):
 
 
 # =====================================================================
-# GITHUB SYNC (via de contents-API; geen git, geen force-push, token alleen in de header)
+# GITHUB SYNC
 # =====================================================================
 def _gh_request(method, path, token, payload=None):
     url = f'https://api.github.com/repos/{GITHUB_REPO}/{path}'
@@ -585,7 +706,7 @@ def push_to_github(files):
                     remote = _gh_request('GET', f'contents/{fname}?ref={GITHUB_BRANCH}', token)
                     sha = remote.get('sha')
                     if base64.b64decode(remote.get('content', '')) == local:
-                        break   # ongewijzigd
+                        break
                 except urllib.error.HTTPError as e:
                     if e.code != 404:
                         raise
@@ -602,7 +723,7 @@ def push_to_github(files):
                     break
                 except urllib.error.HTTPError as e:
                     if e.code in (409, 422) and attempt == 0:
-                        continue   # sha verouderd -> opnieuw ophalen
+                        continue
                     raise
         except Exception as e:
             print(f"❌ Push van {fname} mislukt: {e}")
@@ -629,7 +750,7 @@ def main():
                     time.sleep(1.0)
                     continue
 
-                state, ok = process(df_raw, state, now)
+                state, ok = process(df_raw, state, now, symbol)
                 save_state(state_file, state)
                 written.append(state_file)
                 if ok:
@@ -639,7 +760,7 @@ def main():
                 else:
                     print(f"⚠️ {asset} {tf_name}: onvoldoende data ({state.get('data_status')})")
                 gc.collect()
-                time.sleep(4.0)   # rate limits
+                time.sleep(4.0)
             except Exception as e:
                 print(f"❌ Fout bij {asset} ({tf_name}): {e}")
                 gc.collect()
