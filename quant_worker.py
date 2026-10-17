@@ -403,13 +403,20 @@ def build_dataset(df, feats, lookback):
     De laatste rij heeft nog geen label en wordt gebruikt als voorspel-input.
     """
     d = df.dropna(subset=feats + ['close']).reset_index(drop=True)
-    if len(d) < 3:
+    if len(d) < lookback + 5:
         return None
-    latest = d[feats].iloc[[-1]]
-    ret = (d['close'].shift(-1) / d['close'] - 1.0).iloc[:-1]
+    # Maak X (features) en y (reëel rendement van de volgende candle)
     X = d[feats].iloc[:-1]
-    X, ret = X.iloc[-lookback:], ret.iloc[-lookback:]
-    return X, ret, latest
+    y = (d['close'].shift(-1) / d['close'] - 1.0).iloc[:-1]
+    
+    # Neem alleen het gekozen lookback-venster voor de training
+    X = X.iloc[-lookback:]
+    y = y.iloc[-lookback:]
+    
+    # De allerlaatste rij is de input om de volgende voorspelling mee te doen
+    latest = d[feats].iloc[[-1]]
+    
+    return X, y, latest
 
     for i in range(lookback, len(df) - 1):
         row = df.iloc[i]
