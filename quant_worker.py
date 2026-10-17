@@ -418,52 +418,7 @@ def build_dataset(df, feats, lookback):
     
     return X, y, latest
 
-    for i in range(lookback, len(df) - 1):
-        row = df.iloc[i]
-        window = df.iloc[i-lookback:i]
-        if window.empty:
-            continue
-
-        if not all(pd.notna(window[col]).all() for col in valid):
-            continue
-
-        X.append(window[valid].iloc[-1].to_numpy(dtype=float))
-        
-        entry = as_float(row.get('close'), 0.0)
-        atr = as_float(row.get('ATR'), 0.0)
-        if entry == 0 or atr <= 0:
-            y.append(0)
-            continue
-
-        future = df.iloc[i+1:i+21]
-        if future.empty:
-            y.append(0)
-            continue
-
-        hp = future['high'].max()
-        lp = future['low'].min()
-
-        tp = entry + (TP_ATR_MULT * atr)
-        sl = entry - (SL_ATR_MULT * atr)
-
-        if hp >= tp and lp <= sl:
-            y.append(0)
-        elif hp >= tp:
-            y.append(1)
-        elif lp <= sl:
-            y.append(-1)
-        else:
-            y.append(0)
-
-    if not X:
-        return None
-
-    X = np.asarray(X, dtype=float)
-    y = np.asarray(y, dtype=int)
-    latest = df.iloc[-1][valid].to_numpy(dtype=float)
-    return X, y, latest
-
-
+    
 def evaluate_config(X, y, lr):
     n = len(X)
     h = max(MIN_HOLDOUT, int(n * HOLDOUT_FRACTION))
