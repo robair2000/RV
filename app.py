@@ -145,7 +145,7 @@ if df is not None and not df.empty:
                 
             st.markdown("---")
             
-            # --- UITKLAPMENU: Uitgebreide Model Details & Marktcontext ---
+           # --- UITKLAPMENU: Uitgebreide Model Details & Marktcontext ---
             with st.expander("📊 Bekijk Model State, Ensemble Gewichten & Fouten (JSON)"):
                 st.subheader("Ensemble Model Gewichten (XGBoost / CatBoost / Random Forest)")
                 weights = state.get('model_weights', {})
@@ -153,7 +153,7 @@ if df is not None and not df.empty:
                     df_weights = pd.DataFrame(list(weights.items()), columns=['Model', 'Gewicht'])
                     st.bar_chart(df_weights.set_index('Model'))
                 
-                st.subheaderVolledige State JSON")
+                st.subheader("Volledige State JSON")
                 st.json(state)
                 
         except Exception as e:
