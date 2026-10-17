@@ -651,9 +651,9 @@ def process(df_raw, state, now, symbol):
         'holdout_classifier_accuracy': chosen_res['clf_acc'],
         'holdout_samples': chosen_res['holdout_n'],
         'last_close': last_close,
-        'last_prediction': last_close * (1.0 + (ens_ret / 100.0)),
-        'last_prediction_price': last_close * (1.0 + (ens_ret / 100.0)),
-        'predicted_return_pct': ens_ret * 100.0,
+        'last_prediction': last_close * (1.0 + ens_ret),             # <--- OPGELOST: ens_ret is al decimaal (bijv -0.0025 voor -0.25%)
+        'last_prediction_price': last_close * (1.0 + ens_ret),
+        'predicted_return_pct': ens_ret * 100.0,                    # <--- Dit wordt netjes het reële percentage (bijv -0.25%)
         'direction_probability': prob_up,
         'signal': signal,
         'signal_probability': sig_prob,
