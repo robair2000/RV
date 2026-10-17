@@ -1,0 +1,77 @@
+{
+    "learning_rate": 0.03500000000000002,
+    "max_depth": 5,
+    "n_estimators": 100,
+    "previous_learning_rate": 0.05,
+    "previous_max_depth": 5,
+    "baseline_error": 125.30111844051862,
+    "last_prediction": 81671.36573988173,
+    "search_direction": 1,
+    "lookback_window": 190,
+    "model_weights": {
+        "xgb": 0.17781410136269232,
+        "cat": 0.09832668365721675,
+        "rf": 0.723859214980091
+    },
+    "model_errors": {
+        "xgb": 213.26718749999418,
+        "cat": 385.6726565543213,
+        "rf": 52.38852045427484
+    },
+    "direction_probability": 68.52840423583984,
+    "stop_loss": 81372.73571428572,
+    "take_profit": 81865.70714285715,
+    "active_features": [
+        "return_1",
+        "dist_sma20",
+        "dist_sma50",
+        "dist_ema9",
+        "dist_ema21",
+        "RSI",
+        "atr_ratio",
+        "bb_position",
+        "OBV_slope",
+        "VWAP_dist",
+        "Supertrend_dist",
+        "smc_zone_dist"
+    ],
+    "last_trained_timestamp": 1792236638.2405448,
+    "current_regime": "sideways",
+    "regime_features": {
+        "trending": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "dist_ema9",
+            "dist_ema21",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "OBV_slope",
+            "VWAP_dist",
+            "Supertrend_dist",
+            "smc_zone_dist",
+            "CMF",
+            "lorentzian_dist",
+            "MACD_hist",
+            "regime_score",
+            "ATR_percentile"
+        ],
+        "sideways": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "dist_ema9",
+            "dist_ema21",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "OBV_slope",
+            "VWAP_dist",
+            "Supertrend_dist",
+            "smc_zone_dist"
+        ]
+    },
+    "last_prediction_price": 81671.36573988173,
+    "updated_at": 1792236638
+}
