@@ -398,17 +398,18 @@ def usable_features(df, feats):
 
 
 def build_dataset(df, feats, lookback):
-    df = df.copy()
-    if df.empty:
+    """
+    Target = reëel rendement van de VOLGENDE candle (close[t+1]/close[t] - 1).
+    De laatste rij heeft nog geen label en wordt gebruikt als voorspel-input.
+    """
+    d = df.dropna(subset=feats + ['close']).reset_index(drop=True)
+    if len(d) < 3:
         return None
-
-    valid = [f for f in feats if f in df.columns]
-    if len(valid) < 3:
-        return None
-
-    df = df.reset_index(drop=True)
-    X = []
-    y = []
+    latest = d[feats].iloc[[-1]]
+    ret = (d['close'].shift(-1) / d['close'] - 1.0).iloc[:-1]
+    X = d[feats].iloc[:-1]
+    X, ret = X.iloc[-lookback:], ret.iloc[-lookback:]
+    return X, ret, latest
 
     for i in range(lookback, len(df) - 1):
         row = df.iloc[i]
