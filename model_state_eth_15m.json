@@ -60,33 +60,33 @@
         "lorentzian_dist",
         "ATR_percentile"
     ],
-    "last_trained_timestamp": 1792257340.7573225,
+    "last_trained_timestamp": 1792258680.6853642,
     "model_weights": {
-        "xgb": 0.25715465137914995,
-        "cat": 0.4223127855554051,
-        "rf": 0.320532563065445
+        "xgb": 0.25420963080508874,
+        "cat": 0.4688954946497459,
+        "rf": 0.27689487454516526
     },
     "model_errors": {
-        "xgb": 0.0012527739523414308,
-        "cat": 0.0007628385756529294,
-        "rf": 0.001005066638198479
+        "xgb": 0.001439961259028588,
+        "cat": 0.0007806682075690587,
+        "rf": 0.0013219890687660109
     },
-    "baseline_error": 1.254841043794761,
-    "last_prediction": 2405.8794050034476,
-    "last_prediction_price": 2405.8794050034476,
-    "predicted_return_pct": 0.004547608601319394,
-    "direction_probability": 65.85508728027344,
-    "signal": "long",
-    "signal_probability": 65.85508728027344,
-    "holdout_direction_accuracy": 0.47692307692307695,
-    "holdout_classifier_accuracy": 0.47692307692307695,
+    "baseline_error": 1.4054237559256073,
+    "last_prediction": 2404.4638796790855,
+    "last_prediction_price": 2404.4638796790855,
+    "predicted_return_pct": -0.06716818729693437,
+    "direction_probability": 48.85279846191406,
+    "signal": "short",
+    "signal_probability": 51.14720153808594,
+    "holdout_direction_accuracy": 0.5384615384615384,
+    "holdout_classifier_accuracy": 0.4153846153846154,
     "holdout_samples": 65,
-    "atr": 5.987857142857073,
-    "atr_pct": 0.24889566096746876,
-    "last_close": 2405.77,
-    "last_candle_ts": 1792256400,
+    "atr": 6.054285714285633,
+    "atr_pct": 0.2516244561396808,
+    "last_close": 2406.08,
+    "last_candle_ts": 1792257300,
     "data_status": "ok",
-    "stop_loss": 2396.7882142857143,
-    "take_profit": 2420.739642857143,
-    "updated_at": 1792257340
+    "stop_loss": 2415.1614285714286,
+    "take_profit": 2390.944285714286,
+    "updated_at": 1792258680
 }
