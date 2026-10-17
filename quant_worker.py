@@ -29,8 +29,8 @@ assets = ['BTC', 'ETH', 'LINK']
 
 # Alle timeframes voorspellen de volgende candle (horizon = 1).
 timeframes = {
-    '15m': {'interval': '15m', 'limit': 500, 'min_interval_seconds': 14 * 60},
-    '1h': {'interval': '1h', 'limit': 500, 'min_interval_seconds': 55 * 60},
+    '15m': {'interval': '15m', 'limit': 1000, 'min_interval_seconds': 14 * 60},
+    '1h': {'interval': '1h', 'limit': 1000, 'min_interval_seconds': 55 * 60},
     '1d': {'interval': '1d', 'limit': 365, 'min_interval_seconds': 23 * 3600},
     '1w': {'interval': '1w', 'limit': 100, 'min_interval_seconds': 6 * 86400},
     '1m': {'interval': '1M', 'limit': 60, 'min_interval_seconds': 25 * 86400},
