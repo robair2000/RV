@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("⚡ RV Institutional Quant & Trader Hub")
-st.markdown("*Real-time ML Model Monitoring, Marktcontext & Signal Synchronization*")
+st.markdown("*Real-time ML Model Monitoring, Final Boss Gatekeeper & Signal Synchronization*")
 
 # Sidebar: Asset keuze & Tijdinterval
 asset_options = {
@@ -69,12 +69,22 @@ def load_dashboard_data(symbol, tf_info):
 symbol = f"{asset_code}/USDT"
 df = load_dashboard_data(symbol, interval_info)
 
-# State bestand naam volgt het exacte formaat van de workers: model_state_{asset}_{timescale}.json
+# State bestanden
 state_file = f"model_state_{asset_code.lower()}_{interval_code}.json"
+pattern_file = f"pattern_state_{asset_code.lower()}_15m.json"
 
 if df is not None and not df.empty:
     current_price = float(df['close'].iloc[-1])
     
+    # --- LAAD FINAL BOSS STATE ---
+    boss_state = {}
+    if os.path.exists(pattern_file):
+        try:
+            with open(pattern_file, 'r', encoding='utf-8') as f:
+                boss_state = json.load(f)
+        except Exception:
+            pass
+
     if os.path.exists(state_file):
         try:
             with open(state_file, 'r', encoding='utf-8') as f:
@@ -97,17 +107,22 @@ if df is not None and not df.empty:
                 acc = state.get('holdout_direction_accuracy')
                 skill = state.get('baseline_error')
 
+                # --- FINAL BOSS DATA EXTRACTIE ---
+                boss_signal = boss_state.get('pattern_signal', 'none')
+                boss_score = boss_state.get('pattern_score', 50.0)
+                min_score_req = boss_state.get('min_score_required', 75.0)
+                strictness = boss_state.get('strictness_mode', 'strict')
+                rec_leverage = boss_state.get('recommended_leverage', 1)
+                is_squeeze = boss_state.get('bollinger_squeeze', False)
+
                 # --- SAMENVATTING & TRADER-SYNCHRONISATIE STATUS ---
-                direction_txt = "stijging" if pred_ret_pct > 0 else "daling"
-                if signal == 'long':
-                    st.success(f"📈 LONG-signaal actief: prijsmodel ({pred_ret_pct:+.3f}%) en kansmodel ({prob:.1f}% stijging) zijn in lijn. De trader-worker zoekt naar instapmogelijkheden.")
-                elif signal == 'short':
-                    st.error(f"📉 SHORT-signaal actief: prijsmodel ({pred_ret_pct:+.3f}%) en kansmodel ({100 - prob:.1f}% daling) wijzen omlaag. De trader-worker zoekt naar short-posities.")
-                elif signal == 'none':
-                    st.warning(f"⏸ Geen handelssignaal: het prijsmodel verwacht een {direction_txt} ({pred_ret_pct:+.3f}%), "
-                               f"maar het kansmodel geeft {prob:.1f}% kans. Regressie en classifier spreken elkaar tegen (Trader slaat deze ronde over).")
+                st.markdown("### 👑 Final Boss & Trader Status")
+                if boss_signal == signal and boss_score >= min_score_req:
+                    st.success(f"✅ **GOEDKEURING:** Final Boss en Quant Model zijn in lijn ({signal.upper()}). Score: {boss_score} (Vereist: {min_score_req}). De trader mag handelen met {rec_leverage}x hefboom!")
+                elif boss_signal != signal:
+                    st.warning(f"⚠️ **VETO (Richting):** Final Boss ziet '{boss_signal.upper()}' terwijl Quant model '{signal.upper()}' aangeeft. De trader houdt zich koest.")
                 else:
-                    st.info("State in oud formaat: wacht op de eerstvolgende run van de quant_worker.")
+                    st.info(f"⏸ **VETO (Score):** Signaal komt overeen, maar de score ({boss_score}) is te laag voor de huidige '{strictness}' modus (vereist: {min_score_req}).")
 
                 # --- RIJ 1: Kernkoersen & Voorspelling ---
                 col1, col2, col3, col4 = st.columns(4)
@@ -115,27 +130,24 @@ if df is not None and not df.empty:
                 col2.metric(f"Voorspelling volgende {interval_code}-candle", f"${predicted_price:,.2f}",
                             delta=f"{pred_ret_pct:+.3f}% t.o.v. laatste close", delta_color="normal")
                 col3.metric("RSI (14)", f"{df['RSI'].iloc[-1]:.1f}")
-                col4.metric("Adaptieve LR", f"{lr:.4f}" if isinstance(lr, float) else f"{lr}")
-                st.caption(f"Voorspelling is berekend t.o.v. de laatste gesloten candle (${last_close:,.2f}), niet de live tick-koers.")
+                col4.metric("Final Boss Score", f"{boss_score} / 100", delta=f"Min. vereist: {min_score_req}")
 
-                # SL/TP weergave controleren op basis van het actieve signaal
+                # --- RIJ 2: Final Boss Regimes & Hefboom ---
+                col5, col6, col7, col8 = st.columns(4)
+                col5.metric("Boss Modus", strictness.capitalize())
+                col6.metric("Aanbevolen Hefboom", f"{rec_leverage}x")
+                col7.metric("Bollinger Squeeze", "🔥 Actief" _ if is_squeeze else "Rustig")
+                col8.metric("Kans op stijging (Quant)", f"{prob:.1f}%")
+
+                # --- RIJ 3: Stop-Loss, Take-Profit & Model Details ---
                 show_levels = signal in ('long', 'short')
                 sl_txt = f"${sl:,.2f}" if (show_levels and sl > 0) else "N.v.t. (Geen signaal)"
                 tp_txt = f"${tp:,.2f}" if (show_levels and tp > 0) else "N.v.t. (Geen signaal)"
 
-                # --- RIJ 2: Kansen & ATR gebaseerde Stop-Loss / Take-Profit ---
-                col5, col6, col7, col8 = st.columns(4)
-                prob_color = "📈" if prob >= 50 else "📉"
-                col5.metric(f"{prob_color} Kans op stijging", f"{prob:.1f}%")
-                col6.metric("Lookback-venster", f"{lookback} candles")
-                col7.metric("Stop-Loss (SL - 1.5x ATR)", sl_txt)
-                col8.metric("Take-Profit (TP - 2.5x ATR)", tp_txt)
-
-                # --- RIJ 3: Validatie, Regime & Model Skill ---
                 col9, col10, col11, col12 = st.columns(4)
-                col9.metric("Signaal Status", {'long': '📈 LONG', 'short': '📉 SHORT'}.get(signal, '⏸ Geen'))
-                col10.metric("Marktregime", regime.capitalize())
-                col11.metric("Holdout Nauwkeurigheid", f"{acc * 100:.1f}%" if isinstance(acc, (int, float)) else "n.v.t.")
+                col9.metric("Stop-Loss (SL - 1.5x ATR)", sl_txt)
+                col10.metric("Take-Profit (TP - 2.5x ATR)", tp_txt)
+                col11.metric("Marktregime", regime.capitalize())
                 col12.metric("Skill (<1 = beter dan baseline)", f"{skill:.2f}" if isinstance(skill, (int, float)) else "n.v.t.")
                 
                 if isinstance(skill, (int, float)) and skill >= 1:
@@ -146,18 +158,23 @@ if df is not None and not df.empty:
             st.markdown("---")
             
            # --- UITKLAPMENU: Uitgebreide Model Details & Marktcontext ---
-            with st.expander("📊 Bekijk Model State, Ensemble Gewichten & Fouten (JSON)"):
+            with st.expander("📊 Bekijk Model State, Final Boss JSON & Ensemble Gewichten"):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.subheader("Final Boss State (Pattern JSON)")
+                    st.json(boss_state)
+                with col_b:
+                    st.subheader("Quant Model State (JSON)")
+                    st.json(state)
+                
                 st.subheader("Ensemble Model Gewichten (XGBoost / CatBoost / Random Forest)")
                 weights = state.get('model_weights', {})
                 if weights:
                     df_weights = pd.DataFrame(list(weights.items()), columns=['Model', 'Gewicht'])
                     st.bar_chart(df_weights.set_index('Model'))
                 
-                st.subheader("Volledige State JSON")
-                st.json(state)
-                
         except Exception as e:
-            st.error(f"Fout bij het inlezen van state-bestand: {e}")
+            st.error(f"Fout bij het inlezen van state-bestanden: {e}")
     else:
         st.warning(f"Model state-bestand `{state_file}` nog niet gevonden. Wacht op de eerste run van de quant_worker.")
 else:
