@@ -151,7 +151,6 @@ def analyze_advanced_patterns(df_15m, df_1h):
     score = min(float(score), 98.0)
 
     # --- ADAPTIEF LEREN: BEPAAL FLEXIBILITEIT & EISEN ---
-    # Bij hoge volatiliteit versoepelt de agent de drempel enigszins; in rustige markten is hij streng.
     strictness_mode = 'strict'
     min_score_required = 75.0
     
@@ -196,6 +195,18 @@ def analyze_advanced_patterns(df_15m, df_1h):
 def push_state_to_github(filename, data):
     token = os.environ.get('GITHUB_TOKEN')
     content_bytes = json.dumps(data, indent=2).encode('utf-8')
+    
+    # --- SLIMME PUSH: CONTROLEER OF DATA GEWIJZIGD IS ---
+    if os.path.exists(filename):
+        try:
+            with open(filename, 'rb') as f:
+                existing_bytes = f.read()
+            if existing_bytes == content_bytes:
+                print(f"ℹ️ State {filename} is niet veranderd; GitHub push overgeslagen.")
+                return
+        except Exception:
+            pass
+
     with open(filename, 'wb') as f:
         f.write(content_bytes)
 
@@ -262,7 +273,7 @@ def run_final_boss_scan():
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print("🚀 Final Boss Agent Web Service (Adaptief) gestart.")
+    print("🚀 Final Boss Agent Web Service (Adaptief & Slim) gestart.")
 
     while True:
         try:
