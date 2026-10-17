@@ -260,8 +260,8 @@ def run_final_boss_scan():
         if not symbol:
             continue
         
-        df_15m = fetch_historical_candles(symbol, '15m', limit=120)
-        df_1h = fetch_historical_candles(symbol, '1h', limit=120)
+        df_15m = fetch_historical_candles(symbol, '15m', limit=1000)
+        df_1h = fetch_historical_candles(symbol, '1h', limit=1000)
         
         if not df_15m.empty and not df_1h.empty:
             analysis = analyze_advanced_patterns(df_15m, df_1h)
