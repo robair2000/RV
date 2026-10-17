@@ -56,7 +56,7 @@ MIN_FEATURE_ROWS = 60        # feature telt alleen mee als er genoeg geldige rij
 SL_ATR_MULT = 1.5
 TP_ATR_MULT = 2.5
 
-GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/predictor')
+GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
 # --- CENTRALE EXCHANGE INSTANTIE VOOR RATE LIMITING (spot-data voor candles) ---
