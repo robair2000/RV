@@ -60,7 +60,7 @@
         "ATR_percentile",
         "CMF"
     ],
-    "last_trained_timestamp": 1792269935.9069078,
+    "last_trained_timestamp": 1792270086.5330062,
     "model_weights": {
         "xgb": 0.28951236745165315,
         "cat": 0.36839324315782673,
@@ -88,7 +88,7 @@
     "data_status": "ok",
     "stop_loss": 2415.0128571428572,
     "take_profit": 2429.2185714285715,
-    "updated_at": 1792269935,
+    "updated_at": 1792270086,
     "model_errors_pct": {
         "xgb": 0.09927275552554878,
         "cat": 0.07801631306047102,
