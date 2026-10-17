@@ -71,7 +71,7 @@ PAUSE_AFTER_CALL = float(os.environ.get('PAUSE_AFTER_CALL', 1.0))
 PAUSE_RETRY = 1.0
 ENABLE_BTC_CORRELATION = True
 
-GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/predictor')
+GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
 # Geheugen voor tracking
