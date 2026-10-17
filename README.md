@@ -27,6 +27,7 @@ Het ecosysteem is opgebouwd uit een hiërarchie van autonome agenten die via Git
 |       Trader Worker                  |         |         Quant Worker             |
 |   (trader_worker.py op achtergrond)  |         |   (quant_worker.py via Cron/Server)|
 +--------------------------------------+         +----------------------------------+
+     
 
 ### Bestandsleutel & Rollen
 
