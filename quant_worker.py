@@ -267,7 +267,7 @@ def compute_features(df):
     df['ADX'] = dx.rolling(window=14).mean()
 
     mf_multiplier = ((close - df['low']) - (df['high'] - close)) / ((df['high'] - df['low']) + 1e-8)
-    df['CMF'] = (mf_multiplier * df['volume']).rolling(window=20).sum() / (df['volume'].rolling(window=20).sum() + 1e-8)
+    df['CMF'] = (mf_multiplier * df['volume']).rolling(window=20).sum() / (df['volume'].rolling(20).sum() + 1e-8)
 
     df['ATR_percentile'] = df['ATR'].rolling(window=100).apply(lambda x: (x <= x[-1]).mean(), raw=True)
 
@@ -485,12 +485,44 @@ def process(df_raw, state, now):
         signal, sig_prob = 'none', 50.0     # regressie en classifier spreken elkaar tegen
 
     sign = 1 if reg_up else -1
+
+    # Convert the per-model MAEs (which are in return units, e.g. 0.0045 = 0.45%)
+    # to percent and USD so the UI can show both.
+    maes_returns = chosen_res.get('maes', {}) if chosen_res else {}
+    model_errors_returns = {}
+    model_errors_pct = {}
+    model_errors_usd = {}
+    for k, v in maes_returns.items():
+        if v is None:
+            model_errors_returns[k] = None
+            model_errors_pct[k] = None
+            model_errors_usd[k] = None
+        else:
+            # raw return MAE
+            model_errors_returns[k] = float(v)
+            # percent (0.45 -> 0.45%)
+            model_errors_pct[k] = float(v * 100.0)
+            # approximate USD error at the last close price
+            model_errors_usd[k] = float(v * last_close)
+
+    # Optionally keep a human-readable combined dict if your UI prefers strings:
+    model_errors_readable = {
+        k: f"{model_errors_usd.get(k):.2f} USD ({model_errors_pct.get(k):.2f}%)"
+        if model_errors_usd.get(k) is not None else None
+        for k in model_errors_returns.keys()
+    }
+
     state.update({
         'learning_rate': lr,
         'lookback_window': chosen_cfg['lookback_window'],
         'active_features': feats,
         'model_weights': weights,
-        'model_errors': chosen_res['maes'],
+        # keep the raw returns MAE for backwards compatibility
+        'model_errors': model_errors_returns,
+        # new keys for the UI
+        'model_errors_pct': model_errors_pct,
+        'model_errors_usd': model_errors_usd,
+        'model_errors_readable': model_errors_readable,
         'baseline_error': chosen_res['skill'],
         'holdout_direction_accuracy': chosen_res['dir_acc'],
         'holdout_classifier_accuracy': chosen_res['clf_acc'],
