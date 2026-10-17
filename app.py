@@ -7,15 +7,15 @@ import ccxt
 
 # Pagina configuratie
 st.set_page_config(
-    page_title="RV Quant & Trader Dashboard",
+    page_title="RV Predictor",
     page_icon="⚡",
     layout="wide"
 )
 
-st.title("⚡ RV Institutional Quant Dashboard")
-st.markdown("*Adaptive Machine Learning Monitor & Live Model State*")
+st.title("⚡ RV Predictor")
+st.markdown("*Its magic*")
 
-# Sidebar: Asset keuze & Tijdinterval (aangepast op quant_worker timeframes)
+# Sidebar: Asset keuze & Tijdinterval
 asset_options = {
     'Bitcoin (BTC)': 'BTC',
     'Ethereum (ETH)': 'ETH',
@@ -37,9 +37,9 @@ asset_code = asset_options[selected_asset_name]
 interval_info = interval_options[selected_interval_name]
 interval_code = interval_info['code']
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_dashboard_data(symbol, tf_info):
-    """Haalt de actuele marktdata rechtstreeks op via KuCoin (CCXT) voor de RSI en koerscontext."""
+    """Haalt de marktdata rechtstreeks op via KuCoin (CCXT)."""
     try:
         exchange = ccxt.kucoin({
             'enableRateLimit': True,
@@ -53,7 +53,7 @@ def load_dashboard_data(symbol, tf_info):
         df.drop(columns=['timestamp'], inplace=True)
         df.set_index('Date', inplace=True)
         
-        # Technische RSI indicator berekening
+        # Technische indicatoren voor de RSI metric
         delta = df['close'].diff()
         gain = delta.where(delta > 0, 0.0)
         loss = -delta.where(delta < 0, 0.0)
@@ -65,11 +65,11 @@ def load_dashboard_data(symbol, tf_info):
         st.error(f"Fout bij ophalen KuCoin data: {e}")
         return None
 
-# Haal live marktdata op
+# Haal live data op voor actuele koers en RSI via KuCoin
 symbol = f"{asset_code}/USDT"
 df = load_dashboard_data(symbol, interval_info)
 
-# State bestand naam volgt het exacte formaat van quant_worker: model_state_{asset}_{timescale}.json
+# State bestand naam volgt het formaat: model_state_{asset}_{timescale}.json
 state_file = f"model_state_{asset_code.lower()}_{interval_code}.json"
 
 if df is not None and not df.empty:
@@ -86,30 +86,37 @@ if df is not None and not df.empty:
             lookback = state.get('lookback_window', 150)
             sl = state.get('stop_loss', 0.0)
             tp = state.get('take_profit', 0.0)
-            signal = state.get('signal', 'none')
             
-            # Richtingslogica & correcte SL/TP afstemming op basis van het model-signaal
-            is_long = signal == 'long' or (predicted_price is not None and predicted_price > current_price)
-            
-            # Automatische validatie tegen tegenspraak:
-            # Als signaal 'long' is, moet TP boven koers en SL onder koers liggen. Bij 'short' andersom.
-            if tp > 0 and sl > 0:
-                if is_long and tp < current_price:
-                    tp, sl = sl, tp
-                elif not is_long and tp > current_price:
-                    tp, sl = sl, tp
-
             if predicted_price is not None:
                 pct_diff = ((predicted_price - current_price) / current_price) * 100
                 
-                # --- RIJ 1: Kernkoersen & Modelvoorspelling ---
+                # Bepaal automatisch of het long of short is op basis van de voorspelling
+                is_long = predicted_price > current_price
+                
+                # --- AUTOMATISCHE CORRECTIE TEGEN TEGENSPRAAK ---
+                # Zorg dat TP en SL altijd logisch staan ten opzichte van de huidige koers
+                if is_long:
+                    # Bij Long: TP moet boven de koers, SL moet onder de koers
+                    if tp <= current_price or sl >= current_price:
+                        # Fallback berekening als de json-waarden verkeerd om stonden
+                        distance = abs(predicted_price - current_price)
+                        tp = current_price + max(distance * 2.0, current_price * 0.015)
+                        sl = current_price - max(distance * 1.0, current_price * 0.01)
+                else:
+                    # Bij Short: TP moet onder de koers, SL moet boven de koers
+                    if tp >= current_price or sl <= current_price:
+                        distance = abs(predicted_price - current_price)
+                        tp = current_price - max(distance * 2.0, current_price * 0.015)
+                        sl = current_price + max(distance * 1.0, current_price * 0.01)
+
+                # Hoofdmetrics rij 1
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Huidige Koers (KuCoin)", f"${current_price:,.2f}")
                 col2.metric(f"Ensemble Voorspelling ({interval_code})", f"${predicted_price:,.2f}", delta=f"{pct_diff:+.2f}%")
                 col3.metric("RSI (14)", f"{df['RSI'].iloc[-1]:.1f}")
                 col4.metric("Adaptieve LR", f"{lr:.4f}" if isinstance(lr, float) else f"{lr}")
 
-                # --- RIJ 2: Kansen & Risicobeheer (ATR gebaseerd vanuit workers) ---
+                # Extra institutionele metrics rij 2
                 col5, col6, col7, col8 = st.columns(4)
                 prob_color = "📈" if prob >= 50 else "📉"
                 col5.metric(f"{prob_color} Kans op stijging", f"{prob:.1f}%")
@@ -117,34 +124,26 @@ if df is not None and not df.empty:
                 col7.metric("Stop-Loss (SL)", f"${sl:,.2f}" if sl > 0 else "N.v.t.")
                 col8.metric("Take-Profit (TP)", f"${tp:,.2f}" if tp > 0 else "N.v.t.")
 
-                # --- RIJ 3: Handelsstatistieken & Out-of-sample Holdout Validatie ---
+                # Validatie & handelssignaal (out-of-sample holdout)
                 acc = state.get('holdout_direction_accuracy')
                 skill = state.get('baseline_error')
-                regime = state.get('current_regime', 'sideways')
-                
-                col9, col10, col11, col12 = st.columns(4)
-                signal_display = {'long': '📈 LONG', 'short': '📉 SHORT'}.get(signal, '⏸ Geen')
-                col9.metric("Model Signaal", signal_display)
-                col10.metric("Marktregime", regime.capitalize())
-                col11.metric("Holdout Richtingsnauwkeurigheid", f"{acc * 100:.1f}%" if isinstance(acc, (int, float)) else "n.v.t.")
-                col12.metric("Baseline Fout (Skill)", f"{skill:.2f}" if isinstance(skill, (int, float)) else "n.v.t.")
+                signal = state.get('signal', 'none')
+                col9, col10, col11 = st.columns(3)
+                col9.metric("Signaal", {'long': '📈 LONG', 'short': '📉 SHORT'}.get(signal, '⏸ Geen'))
+                col10.metric("Holdout richtingsnauwkeurigheid", f"{acc * 100:.1f}%" if isinstance(acc, (int, float)) else "n.v.t.")
+                col11.metric("Skill (<1 = beter dan 'geen beweging')", f"{skill:.2f}" if isinstance(skill, (int, float)) else "n.v.t.")
             else:
                 st.warning("Model state gevonden, maar nog geen voorspelling beschikbaar.")
                 
             st.markdown("---")
             
-            # Model details & ensemble gewichten uitklapmenu
+            # Model details uitklapmenu
             with st.expander("📊 Bekijk Model & State Details (Weging, Fouten & Parameters)"):
-                st.subheader("Ensemble Model Gewichten (XGBoost / CatBoost / Random Forest)")
-                weights = state.get('model_weights', {})
-                if weights:
-                    df_weights = pd.DataFrame(list(weights.items()), columns=['Model', 'Gewicht'])
-                    st.bar_chart(df_weights.set_index('Model'))
                 st.json(state)
                 
         except Exception as e:
             st.error(f"Fout bij het inlezen van state-bestand: {e}")
     else:
-        st.warning(f"Model state-bestand `{state_file}` nog niet gevonden. Wacht op de eerste run van de quant_worker.")
+        st.warning(f"Model state-bestand `{state_file}` nog niet gevonden. Wacht op de eerste run van de achtergrond-worker.")
 else:
     st.error("Kon geen marktdata ophalen via KuCoin.")
