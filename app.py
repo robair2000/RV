@@ -23,11 +23,11 @@ asset_options = {
 }
 
 interval_options = {
-    '15 Minuten': {'interval': '15m', 'limit': 500, 'code': '15m'},
-    '1 Uur': {'interval': '1h', 'limit': 500, 'code': '1h'},
-    '1 Dag': {'interval': '1d', 'limit': 365, 'code': '1d'},
-    '1 Week': {'interval': '1w', 'limit': 100, 'code': '1w'},
-    '1 Maand': {'interval': '1M', 'limit': 60, 'code': '1m'}
+    '15 Minuten': {'interval': '15m', 'limit': 1000, 'code': '15m'},
+    '1 Uur': {'interval': '1h', 'limit': 1000, 'code': '1h'},
+    '1 Dag': {'interval': '1d', 'limit': 500, 'code': '1d'},
+    '1 Week': {'interval': '1w', 'limit': 150, 'code': '1w'},
+    '1 Maand': {'interval': '1M', 'limit': 100, 'code': '1m'}
 }
 
 selected_asset_name = st.sidebar.selectbox("Selecteer Asset", list(asset_options.keys()))
