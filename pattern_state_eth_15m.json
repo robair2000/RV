@@ -1,13 +1,13 @@
 {
-  "pattern_score": 50.0,
-  "pattern_signal": "none",
-  "recommended_leverage": 1,
+  "pattern_score": 75.0,
+  "pattern_signal": "long",
+  "recommended_leverage": 5,
   "recommended_trailing_mult": 1.5,
   "min_score_required": 80.0,
   "strictness_mode": "strict",
-  "rsi_15m": 37.51,
-  "rsi_1h": 34.06,
+  "rsi_15m": 32.84,
+  "rsi_1h": 32.58,
   "volume_spike": false,
   "bollinger_squeeze": false,
-  "updated_at": 1792277919.704937
+  "updated_at": 1792278230.8600006
 }
