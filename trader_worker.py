@@ -39,33 +39,29 @@ POSITION_CHECK_INTERVAL_SECONDS = 60  # Elke minuut open posities controleren
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))   # margin per trade
 LEVERAGE = int(os.environ.get('LEVERAGE', 10))
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
-# Zet DRY_RUN=true om alles te loggen zonder echte orders te plaatsen.
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
-EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')   # zoals in je werkende opzet; alternatief: 'kucoinfutures'
+EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
-# Basis & risico drempels
+# Basis & risico drempels (naadloos afgestemd op quant_worker)
 MIN_DIRECTION_PROBABILITY = float(os.environ.get('MIN_DIRECTION_PROBABILITY', 65.0))
-# Minimale door het model voorspelde beweging (%). Moet boven de round-trip kosten liggen
-# (~0.12% taker-fees + slippage), anders is een correcte voorspelling nog verliesgevend.
 MIN_PREDICTED_RETURN_PCT = float(os.environ.get('MIN_PREDICTED_RETURN_PCT', 0.15))
-# Minimale out-of-sample richtingsnauwkeurigheid van het model (holdout) om te mogen handelen.
 MIN_HOLDOUT_ACCURACY = float(os.environ.get('MIN_HOLDOUT_ACCURACY', 0.55))
-MIN_RRR = 1.55
+MIN_RRR = 1.40  # Aangepast aan de 2.5x TP / 1.5x SL verhouding (2.5 / 1.5 = 1.66 RRR)
 MIN_ATR_PCT = 0.25
 MAX_ATR_PCT = 5.5
 MAX_FUNDING_RATE = 0.0005
 COOLDOWN_SECONDS = 3600
+
+# STRIKTE MULTIPLIERS GELIJKGETROKKEN MET QUANT_WORKER.PY
 SL_ATR_MULT = 1.5
-TP_ATR_MULT = 3.0
-MAX_NOTIONAL_OVERSHOOT = 1.5          # positie mag max 1.5x de gewenste notional zijn (bij grote contracten)
-MIN_SCORE = 2                         # minimaal aantal zachte punten (van 4)
+TP_ATR_MULT = 2.5
 
-# Een state ouder dan dit wordt niet gebruikt (de worker is dan waarschijnlijk gestopt)
+MAX_NOTIONAL_OVERSHOOT = 1.5
+MIN_SCORE = 2
+
 MAX_STATE_AGE_SECONDS = {'15m': 40 * 60, '1h': 2 * 3600 + 30 * 60}
-
 MIN_ORDERBOOK_IMBALANCE = 0.55
 
-# Pauzes tegen 429 rate limits (overgenomen uit je 'safe'-branch)
 PAUSE_BETWEEN_ASSETS = float(os.environ.get('PAUSE_BETWEEN_ASSETS', 4.0))
 PAUSE_AFTER_CALL = float(os.environ.get('PAUSE_AFTER_CALL', 1.0))
 PAUSE_RETRY = 1.0
@@ -74,11 +70,10 @@ ENABLE_BTC_CORRELATION = True
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
-# Geheugen voor tracking
-active_trades = {}      # {symbol: {side, entry, peak, sl, tp, atr}}
-symbol_cooldowns = {}   # {symbol: timestamp_laatste_verlies}
-missing_counts = {}     # {symbol: aantal opeenvolgende checks dat de positie ontbrak}
-MISSING_CHECKS_REQUIRED = 2   # tegen tijdelijk lege positielijsten van de exchange
+active_trades = {}
+symbol_cooldowns = {}
+missing_counts = {}
+MISSING_CHECKS_REQUIRED = 2
 
 exchange = getattr(ccxt, EXCHANGE_ID)({
     'apiKey': os.getenv('KUCOIN_API_KEY', ''),
@@ -90,10 +85,9 @@ exchange = getattr(ccxt, EXCHANGE_ID)({
 
 
 # =====================================================================
-# STATE LADEN
+# STATE LADEN VANAF GITHUB
 # =====================================================================
 def pull_latest_states_from_github():
-    """Haalt de state-bestanden op via de GitHub API (geen CDN-cache van raw.githubusercontent)."""
     token = os.environ.get('GITHUB_TOKEN', '')
     failed = 0
     for asset in ASSETS:
@@ -107,7 +101,7 @@ def pull_latest_states_from_github():
                 req = urllib.request.Request(url, headers=headers)
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     content = resp.read()
-                json.loads(content.decode('utf-8'))      # alleen geldige JSON wegschrijven
+                json.loads(content.decode('utf-8'))
                 tmp = filename + '.tmp'
                 with open(tmp, 'wb') as f:
                     f.write(content)
@@ -115,14 +109,11 @@ def pull_latest_states_from_github():
             except Exception as e:
                 failed += 1
                 print(f"⚠️ Kon {filename} niet ophalen: {e}")
-    if failed:
-        print(f"⚠️ {failed} state-bestand(en) niet ververst; verouderde states worden door de leeftijdscheck geweigerd.")
-    else:
+    if not failed:
         print("🔄 Verse state-bestanden opgehaald van GitHub.")
 
 
 def load_state(asset, tf):
-    """Geeft de state terug als hij bestaat, geldig is, vers genoeg is en een voorspelling bevat; anders None."""
     path = f'model_state_{asset.lower()}_{tf}.json'
     if not os.path.exists(path):
         return None
@@ -133,19 +124,18 @@ def load_state(asset, tf):
         print(f"⚠️ State {path} onleesbaar: {e}")
         return None
     if st.get('data_status') != 'ok' or st.get('signal') not in ('long', 'short', 'none'):
-        return None   # oud formaat of onvoldoende data
+        return None
     age = time.time() - float(st.get('updated_at', 0) or 0)
     if age > MAX_STATE_AGE_SECONDS.get(tf, 3600):
-        print(f"⚠️ State {path} is {age / 60:.0f} min oud (max {MAX_STATE_AGE_SECONDS.get(tf, 3600) / 60:.0f}); genegeerd.")
+        print(f"⚠️ State {path} is te oud ({age / 60:.0f} min); genegeerd.")
         return None
     return st
 
 
 # =====================================================================
-# ORDERS
+# ORDERS & POSITIES
 # =====================================================================
 def close_position(symbol, side, contracts):
-    """Sluit een positie met een reduce-only market order. Retourneert True bij succes."""
     close_side = 'sell' if side == 'long' else 'buy'
     if DRY_RUN:
         print(f"[DRY_RUN] Zou {symbol} sluiten ({close_side} {contracts})")
@@ -168,10 +158,6 @@ def pnl_fraction(side, entry, price):
 
 
 def manage_open_positions_and_trailing_stops():
-    """
-    Beheert open posities (elke minuut): trailing stop, harde stop-loss en take-profit.
-    De stop is een echte stop: hij sluit de positie zodra hij geraakt wordt, ongeacht wat het model zegt.
-    """
     try:
         positions = exchange.fetch_positions()
     except Exception as e:
@@ -197,14 +183,12 @@ def manage_open_positions_and_trailing_stops():
 
         trade = active_trades.get(symbol)
         if trade is None:
-            # Na een herstart: stops opnieuw opbouwen vanuit de ATR in de laatste 15m-state
             base = symbol.split('/')[0]
             st = load_state(base, '15m')
             if st and st.get('atr_pct'):
                 atr = entry * float(st['atr_pct']) / 100.0
             else:
                 atr = entry * 0.015
-                print(f"⚠️ Geen verse ATR voor {symbol}; terugval op 1.5% voor de stops.")
             sgn = 1 if side == 'long' else -1
             trade = active_trades[symbol] = {
                 'side': side, 'entry': entry, 'peak': price, 'atr': atr,
@@ -240,7 +224,6 @@ def manage_open_positions_and_trailing_stops():
                     symbol_cooldowns[symbol] = time.time()
                 active_trades.pop(symbol, None)
 
-    # Posities die niet meer open zijn (gesloten door de SL/TP op de exchange of handmatig)
     for symbol in list(missing_counts.keys()):
         if symbol in open_symbols or symbol not in active_trades:
             missing_counts.pop(symbol, None)
@@ -249,20 +232,19 @@ def manage_open_positions_and_trailing_stops():
             continue
         missing_counts[symbol] = missing_counts.get(symbol, 0) + 1
         if missing_counts[symbol] < MISSING_CHECKS_REQUIRED:
-            continue   # nog even afwachten: kan een tijdelijke lege lijst zijn
+            continue
         missing_counts.pop(symbol, None)
         trade = active_trades.pop(symbol)
         try:
             price = float(exchange.fetch_ticker(symbol)['last'])
             if pnl_fraction(trade['side'], trade['entry'], price) < 0:
                 symbol_cooldowns[symbol] = time.time()
-                print(f"ℹ️ {symbol} is extern gesloten, waarschijnlijk met verlies -> cooldown.")
+                print(f"ℹ️ {symbol} is extern gesloten met verlies -> cooldown.")
         except Exception:
             pass
 
 
 def ensure_margin_and_leverage(symbol):
-    """Stelt margin mode en hefboom in. Retourneert True alleen als beide gelukt zijn."""
     if DRY_RUN:
         return True
     has = getattr(exchange, 'has', {}) or {}
@@ -275,7 +257,6 @@ def ensure_margin_and_leverage(symbol):
                 except Exception as e:
                     if attempt == 1:
                         raise
-                    print(f"⚠️ margin mode poging 1 mislukt voor {symbol}: {repr(e)}")
                     time.sleep(PAUSE_RETRY)
         for attempt in range(2):
             try:
@@ -287,7 +268,6 @@ def ensure_margin_and_leverage(symbol):
             except Exception as e:
                 if attempt == 1:
                     raise
-                print(f"⚠️ leverage poging 1 mislukt voor {symbol}: {repr(e)}")
                 time.sleep(PAUSE_RETRY)
     except Exception as e:
         print(f"⛔ Margin/leverage setup mislukt voor {symbol}: {repr(e)}")
@@ -295,16 +275,10 @@ def ensure_margin_and_leverage(symbol):
 
 
 def compute_contract_amount(symbol, price):
-    """
-    Rekent de gewenste notional (margin x hefboom) om naar hele contracten.
-    Rondt naar BENEDEN af; neemt 1 contract alleen als dat de notional niet te ver overschrijdt.
-    Retourneert None als er geen veilige hoeveelheid is.
-    """
     target = TRADE_AMOUNT_USDT * LEVERAGE
     try:
         contract_size = float(exchange.market(symbol).get('contractSize') or 1.0)
     except Exception:
-        print(f"⛔ Contractgrootte van {symbol} onbekend; trade overgeslagen.")
         return None
     per_contract = price * contract_size
     if per_contract <= 0:
@@ -314,16 +288,14 @@ def compute_contract_amount(symbol, price):
         if per_contract <= target * MAX_NOTIONAL_OVERSHOOT:
             amount = 1
         else:
-            print(f"⚠️ 1 contract {symbol} = ${per_contract:.2f}, ver boven de gewenste ${target:.2f}; overgeslagen.")
             return None
     return float(amount)
 
 
 # =====================================================================
-# SCAN
+# SCAN & EVALUATIE
 # =====================================================================
 def resolve_symbol(asset):
-    """Kiest de perpetual-markt. Valt terug op 'ASSET/USDT' maar alleen als dat echt een swap/contract is (nooit spot)."""
     primary = f"{asset}/USDT:USDT"
     if primary in exchange.markets:
         return primary
@@ -335,7 +307,6 @@ def resolve_symbol(asset):
 
 
 def execute_live_trades_scan():
-    """Zoekt nieuwe trades (elke 15 min) op basis van harde filters + puntensysteem."""
     pull_latest_states_from_github()
     print("--- [Futures Live Trader Worker] Start scan ---")
 
@@ -349,23 +320,19 @@ def execute_live_trades_scan():
         active_symbols = {p.get('symbol') for p in exchange.fetch_positions()
                           if abs(float(p.get('contracts') or 0)) > 0}
     except Exception as e:
-        print(f"⛔ Kan open posities niet ophalen ({e}); scan afgebroken om dubbele posities te voorkomen.")
+        print(f"⛔ Kan open posities niet ophalen ({e}); scan afgebroken.")
         return
 
     for asset in ASSETS:
         symbol = resolve_symbol(asset)
         if symbol is None:
-            print(f"⚠️ Geen swap/futures-markt voor {asset} op {EXCHANGE_ID}; overgeslagen.")
             continue
-
         if symbol in active_symbols:
             print(f"⏳ Open positie voor {symbol}, geen nieuwe trade.")
             continue
-
         if symbol in symbol_cooldowns:
             elapsed = time.time() - symbol_cooldowns[symbol]
             if elapsed < COOLDOWN_SECONDS:
-                print(f"⏳ Cooldown {symbol}: nog {int((COOLDOWN_SECONDS - elapsed) / 60)} min.")
                 continue
             del symbol_cooldowns[symbol]
 
@@ -384,7 +351,6 @@ def evaluate_and_trade(asset, symbol):
 
     signal = state_15m['signal']
     if signal == 'none':
-        print(f"ℹ️ {asset}: model zonder eenduidig signaal (regressie en classifier oneens).")
         return
     is_long = signal == 'long'
     prob = float(state_15m.get('signal_probability', 50.0))
@@ -394,38 +360,33 @@ def evaluate_and_trade(asset, symbol):
 
     price = float(exchange.fetch_ticker(symbol)['last'])
 
-    # --- ATR/SL/TP uit de echte ATR van het model ---
     if atr_pct <= 0:
-        print(f"⚠️ {asset}: geen ATR in state; overgeslagen.")
         return
     atr = price * atr_pct / 100.0
     sgn = 1 if is_long else -1
+    
+    # Gebruik de exact gelijgetrokken multipliers (2.5x TP / 1.5x SL)
     stop_loss_val = price - sgn * SL_ATR_MULT * atr
     take_profit_val = price + sgn * TP_ATR_MULT * atr
 
     # ========== HARDE FILTERS ==========
     if atr_pct < MIN_ATR_PCT or atr_pct > MAX_ATR_PCT:
-        print(f"⚠️ Volatiliteitsfilter {asset}: ATR {atr_pct:.2f}% buiten [{MIN_ATR_PCT}, {MAX_ATR_PCT}].")
         return
     rrr = abs(take_profit_val - price) / abs(price - stop_loss_val)
     if rrr < MIN_RRR:
-        print(f"⚠️ RRR-filter {asset}: {rrr:.2f} < {MIN_RRR}")
         return
     if holdout_acc is None or holdout_acc < MIN_HOLDOUT_ACCURACY:
-        print(f"⚠️ {asset}: out-of-sample richtingsnauwkeurigheid {holdout_acc} < {MIN_HOLDOUT_ACCURACY}; geen edge aangetoond.")
         return
 
-    # ========== ZACHTE FILTERS ==========
+    # ========== ZACHTE FILTERS (PUNTENYSTEEM) ==========
     score, max_score = 0, 4
 
     # 1) 15m en 1h eens over de richting
     state_1h = load_state(asset, '1h')
     if state_1h is not None and state_1h['signal'] == signal:
         score += 1
-    else:
-        print(f"ℹ️ [Score] 1h-model bevestigt {signal} niet voor {asset} (geen punt).")
 
-    # 2) Niet tegen de BTC-richting in (voor BTC zelf altijd ok)
+    # 2) BTC correlatie check
     if asset == 'BTC':
         score += 1
     elif ENABLE_BTC_CORRELATION:
@@ -433,12 +394,8 @@ def evaluate_and_trade(asset, symbol):
         opposite = 'short' if is_long else 'long'
         if btc is not None and btc['signal'] != opposite:
             score += 1
-        else:
-            print(f"ℹ️ [Score] BTC-state onbekend of tegen {signal} voor {asset} (geen punt).")
-    else:
-        score += 1
 
-    # 3) Orderboek-imbalance (bij fouten geen punt)
+    # 3) Orderboek druk via API
     try:
         ob = exchange.fetch_order_book(symbol, limit=20)
         time.sleep(PAUSE_AFTER_CALL)
@@ -448,34 +405,28 @@ def evaluate_and_trade(asset, symbol):
             ratio = (bids if is_long else asks) / (bids + asks)
             if ratio >= MIN_ORDERBOOK_IMBALANCE:
                 score += 1
-            else:
-                print(f"ℹ️ [Score] Orderboekdruk {ratio:.2f} te laag voor {asset} (geen punt).")
-    except Exception as e:
-        print(f"ℹ️ [Score] Orderboek niet beschikbaar voor {asset}: {e} (geen punt).")
+    except Exception:
+        pass
 
-    # 4) Funding rate (bij fouten geen punt)
+    # 4) Funding rate check via API
     try:
         funding = exchange.fetch_funding_rate(symbol).get('fundingRate')
         time.sleep(PAUSE_AFTER_CALL)
         if funding is not None and not ((is_long and funding > MAX_FUNDING_RATE) or
                                         ((not is_long) and funding < -MAX_FUNDING_RATE)):
             score += 1
-        else:
-            print(f"ℹ️ [Score] Ongunstige/onbekende funding voor {asset} (geen punt).")
-    except Exception as e:
-        print(f"ℹ️ [Score] Funding niet beschikbaar voor {asset}: {e} (geen punt).")
+    except Exception:
+        pass
 
     direction_str = "LONG 📈" if is_long else "SHORT 📉"
     print(f"Beoordeling {asset} ({direction_str}) -> Score {score}/{max_score} | Kans {prob:.1f}% | "
-          f"Voorspelde move {pred_move_pct:.3f}% | ATR {atr_pct:.2f}% | holdout-acc {holdout_acc:.2f}")
+          f"Move {pred_move_pct:.3f}% | ATR {atr_pct:.2f}% | Holdout-acc {holdout_acc:.2f}")
 
     if not (prob >= MIN_DIRECTION_PROBABILITY and pred_move_pct >= MIN_PREDICTED_RETURN_PCT and score >= MIN_SCORE):
-        print(f"ℹ️ {asset}: onder drempel (kans>={MIN_DIRECTION_PROBABILITY}, move>={MIN_PREDICTED_RETURN_PCT}%, score>={MIN_SCORE}).")
         return
 
     # ========== UITVOERING ==========
     if not ensure_margin_and_leverage(symbol):
-        print(f"⛔ Trade {asset} geannuleerd: margin/leverage niet gegarandeerd.")
         return
     amount = compute_contract_amount(symbol, price)
     if amount is None:
@@ -492,20 +443,18 @@ def evaluate_and_trade(asset, symbol):
         'takeProfit': {'triggerPrice': take_profit_val},
         'marginMode': DESIRED_MARGIN_MODE,
     }
-    order = None
     try:
         order = exchange.create_order(symbol, 'market', side, amount, None, params)
     except Exception as e:
-        print(f"⚠️ Order met SL/TP-parameters mislukt ({repr(e)}); poging zonder (software-stop neemt het over).")
+        print(f"⚠️ Order met SL/TP parameters mislukt ({repr(e)}); poging zonder...")
         try:
             order = exchange.create_order(symbol, 'market', side, amount, None,
                                           {'marginMode': DESIRED_MARGIN_MODE})
         except Exception as e2:
-            print(f"⛔ Fout bij orderplaatsing voor {symbol}: {repr(e2)}")
+            print(f"⛔ Fout bij orderplaatsing {symbol}: {repr(e2)}")
             return
 
     print(f"✅ Order geplaatst: {order.get('id') if isinstance(order, dict) else order}")
-    # De software-stop (elke minuut gecontroleerd) is altijd actief, ook als de exchange de SL/TP negeerde
     active_trades[symbol] = {
         'side': 'long' if is_long else 'short', 'entry': price, 'peak': price, 'atr': atr,
         'sl': stop_loss_val, 'tp': take_profit_val,
