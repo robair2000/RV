@@ -37,25 +37,21 @@ TRADE_CHECK_INTERVAL_SECONDS = 900    # Elke 15 minuten nieuwe trades zoeken
 POSITION_CHECK_INTERVAL_SECONDS = 60  # Elke minuut open posities controleren
 
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))   # margin per trade
-LEVERAGE = int(os.environ.get('LEVERAGE', 10))
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
-# Basis & risico drempels (naadloos afgestemd op quant_worker)
+# Basis & risico drempels
 MIN_DIRECTION_PROBABILITY = float(os.environ.get('MIN_DIRECTION_PROBABILITY', 65.0))
 MIN_PREDICTED_RETURN_PCT = float(os.environ.get('MIN_PREDICTED_RETURN_PCT', 0.15))
 MIN_HOLDOUT_ACCURACY = float(os.environ.get('MIN_HOLDOUT_ACCURACY', 0.55))
-MIN_RRR = 1.40  # Aangepast aan de 2.5x TP / 1.5x SL verhouding (2.5 / 1.5 = 1.66 RRR)
+MIN_RRR = 1.40
 MIN_ATR_PCT = 0.25
 MAX_ATR_PCT = 5.5
 MAX_FUNDING_RATE = 0.0005
 COOLDOWN_SECONDS = 3600
 
-# STRIKTE MULTIPLIERS GELIJKGETROKKEN MET QUANT_WORKER.PY
-SL_ATR_MULT = 1.5
 TP_ATR_MULT = 2.5
-
 MAX_NOTIONAL_OVERSHOOT = 1.5
 MIN_SCORE = 2
 
@@ -90,27 +86,29 @@ exchange = getattr(ccxt, EXCHANGE_ID)({
 def pull_latest_states_from_github():
     token = os.environ.get('GITHUB_TOKEN', '')
     failed = 0
+    files_to_pull = []
     for asset in ASSETS:
         for tf in TIMEFRAMES:
-            filename = f'model_state_{asset.lower()}_{tf}.json'
-            url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
-            headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'trader-worker'}
-            if token:
-                headers['Authorization'] = f'Bearer {token}'
-            try:
-                req = urllib.request.Request(url, headers=headers)
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    content = resp.read()
-                json.loads(content.decode('utf-8'))
-                tmp = filename + '.tmp'
-                with open(tmp, 'wb') as f:
-                    f.write(content)
-                os.replace(tmp, filename)
-            except Exception as e:
-                failed += 1
-                print(f"⚠️ Kon {filename} niet ophalen: {e}")
-    if not failed:
-        print("🔄 Verse state-bestanden opgehaald van GitHub.")
+            files_to_pull.append(f'model_state_{asset.lower()}_{tf}.json')
+            files_to_pull.append(f'pattern_state_{asset.lower()}_{tf}.json')
+
+    for filename in files_to_pull:
+        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
+        headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'trader-worker'}
+        if token:
+            headers['Authorization'] = f'Bearer {token}'
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                content = resp.read()
+            tmp = filename + '.tmp'
+            with open(tmp, 'wb') as f:
+                f.write(content)
+            os.replace(tmp, filename)
+        except Exception:
+            failed += 1
+    if failed < len(files_to_pull):
+        print("🔄 Quant states & Final Boss states opgehaald van GitHub.")
 
 
 def load_state(asset, tf):
@@ -120,16 +118,25 @@ def load_state(asset, tf):
     try:
         with open(path, 'r', encoding='utf-8') as f:
             st = json.load(f)
-    except Exception as e:
-        print(f"⚠️ State {path} onleesbaar: {e}")
+    except Exception:
         return None
     if st.get('data_status') != 'ok' or st.get('signal') not in ('long', 'short', 'none'):
         return None
     age = time.time() - float(st.get('updated_at', 0) or 0)
     if age > MAX_STATE_AGE_SECONDS.get(tf, 3600):
-        print(f"⚠️ State {path} is te oud ({age / 60:.0f} min); genegeerd.")
         return None
     return st
+
+
+def load_pattern_state(asset, tf='15m'):
+    path = f'pattern_state_{asset.lower()}_{tf}.json'
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
 
 
 # =====================================================================
@@ -185,6 +192,9 @@ def manage_open_positions_and_trailing_stops():
         if trade is None:
             base = symbol.split('/')[0]
             st = load_state(base, '15m')
+            pst = load_pattern_state(base, '15m')
+            trail_mult = float(pst.get('recommended_trailing_mult', 1.5)) if pst else 1.5
+
             if st and st.get('atr_pct'):
                 atr = entry * float(st['atr_pct']) / 100.0
             else:
@@ -192,43 +202,33 @@ def manage_open_positions_and_trailing_stops():
             sgn = 1 if side == 'long' else -1
             trade = active_trades[symbol] = {
                 'side': side, 'entry': entry, 'peak': price, 'atr': atr,
-                'sl': entry - sgn * SL_ATR_MULT * atr,
+                'sl': entry - sgn * trail_mult * atr,
                 'tp': entry + sgn * TP_ATR_MULT * atr,
+                'trailing_mult': trail_mult,
             }
 
         atr = trade['atr']
-        
-        # Bereken het huidige rendement in decimalen (bijv. 0.015 = 1.5% winst)
+        trail_mult = trade.get('trailing_mult', 1.5)
         current_pnl_pct = pnl_fraction(side, entry, price)
         
         if side == 'long':
             if price > trade['peak']:
                 trade['peak'] = price
-                
-                # TRAILING STOP PAS ACTIVEREN BIJ >= 1.5% WINST (0.015)
                 if current_pnl_pct >= 0.015:
-                    new_sl = price - SL_ATR_MULT * atr
+                    new_sl = price - trail_mult * atr
                     if new_sl > trade['sl']:
                         trade['sl'] = new_sl
-                        print(f"📈 Trailing stop {symbol} geactiveerd/omhoog naar ${trade['sl']:.4f} (Winst: {current_pnl_pct*100:.2f}%)")
-                else:
-                    print(f"⏳ {symbol} winst is {current_pnl_pct*100:.2f}% (< 1.5%); trailing stop schuift nog niet mee.")
-                    
+                        print(f"📈 Trailing stop {symbol} geactiveerd naar ${trade['sl']:.4f} (Boss mult: {trail_mult}x, Winst: {current_pnl_pct*100:.2f}%)")
             stop_hit = price <= trade['sl']
             tp_hit = price >= trade['tp']
         else:
             if price < trade['peak']:
                 trade['peak'] = price
-                
-                # TRAILING STOP PAS ACTIVEREN BIJ >= 1.5% WINST (0.015)
                 if current_pnl_pct >= 0.015:
-                    new_sl = price + SL_ATR_MULT * atr
+                    new_sl = price + trail_mult * atr
                     if new_sl < trade['sl']:
                         trade['sl'] = new_sl
-                        print(f"📉 Trailing stop {symbol} geactiveerd/omlaag naar ${trade['sl']:.4f} (Winst: {current_pnl_pct*100:.2f}%)")
-                else:
-                    print(f"⏳ {symbol} winst is {current_pnl_pct*100:.2f}% (< 1.5%); trailing stop schuift nog niet mee.")
-                    
+                        print(f"📉 Trailing stop {symbol} geactiveerd naar ${trade['sl']:.4f} (Boss mult: {trail_mult}x, Winst: {current_pnl_pct*100:.2f}%)")
             stop_hit = price >= trade['sl']
             tp_hit = price <= trade['tp']
             
@@ -250,18 +250,12 @@ def manage_open_positions_and_trailing_stops():
         if missing_counts[symbol] < MISSING_CHECKS_REQUIRED:
             continue
         missing_counts.pop(symbol, None)
-        trade = active_trades.pop(symbol)
-        try:
-            price = float(exchange.fetch_ticker(symbol)['last'])
-            if pnl_fraction(trade['side'], trade['entry'], price) < 0:
-                symbol_cooldowns[symbol] = time.time()
-                print(f"ℹ️ {symbol} is extern gesloten met verlies -> cooldown.")
-        except Exception:
-            pass
+        active_trades.pop(symbol)
 
 
-def ensure_margin_and_leverage(symbol):
+def ensure_margin_and_leverage(symbol, target_leverage):
     if DRY_RUN:
+        print(f"[DRY_RUN] Zou leverage instellen op {target_leverage}x voor {symbol}")
         return True
     has = getattr(exchange, 'has', {}) or {}
     try:
@@ -270,18 +264,19 @@ def ensure_margin_and_leverage(symbol):
                 try:
                     exchange.set_margin_mode(DESIRED_MARGIN_MODE, symbol)
                     break
-                except Exception as e:
+                except Exception:
                     if attempt == 1:
                         raise
                     time.sleep(PAUSE_RETRY)
         for attempt in range(2):
             try:
                 try:
-                    exchange.set_leverage(LEVERAGE, symbol)
+                    exchange.set_leverage(target_leverage, symbol)
                 except Exception:
-                    exchange.set_leverage(LEVERAGE, symbol, {'marginMode': DESIRED_MARGIN_MODE})
+                    exchange.set_leverage(target_leverage, symbol, {'marginMode': DESIRED_MARGIN_MODE})
+                print(f"⚙️ Leverage ingesteld op {target_leverage}x voor {symbol}")
                 return True
-            except Exception as e:
+            except Exception:
                 if attempt == 1:
                     raise
                 time.sleep(PAUSE_RETRY)
@@ -290,8 +285,8 @@ def ensure_margin_and_leverage(symbol):
     return False
 
 
-def compute_contract_amount(symbol, price):
-    target = TRADE_AMOUNT_USDT * LEVERAGE
+def compute_contract_amount(symbol, price, leverage):
+    target = TRADE_AMOUNT_USDT * leverage
     try:
         contract_size = float(exchange.market(symbol).get('contractSize') or 1.0)
     except Exception:
@@ -309,7 +304,7 @@ def compute_contract_amount(symbol, price):
 
 
 # =====================================================================
-# SCAN & EVALUATIE
+# SCAN & EVALUATIE (MET FINAL BOSS GATEKEEPER)
 # =====================================================================
 def resolve_symbol(asset):
     primary = f"{asset}/USDT:USDT"
@@ -344,7 +339,6 @@ def execute_live_trades_scan():
         if symbol is None:
             continue
         if symbol in active_symbols:
-            print(f"⏳ Open positie voor {symbol}, geen nieuwe trade.")
             continue
         if symbol in symbol_cooldowns:
             elapsed = time.time() - symbol_cooldowns[symbol]
@@ -362,7 +356,6 @@ def execute_live_trades_scan():
 def evaluate_and_trade(asset, symbol):
     state_15m = load_state(asset, '15m')
     if state_15m is None:
-        print(f"ℹ️ Geen bruikbare/verse 15m-state voor {asset}.")
         return
 
     signal = state_15m['signal']
@@ -375,34 +368,54 @@ def evaluate_and_trade(asset, symbol):
     atr_pct = float(state_15m.get('atr_pct') or 0.0)
 
     price = float(exchange.fetch_ticker(symbol)['last'])
-
     if atr_pct <= 0:
         return
     atr = price * atr_pct / 100.0
+
+    # =====================================================================
+    # 👑 FINAL BOSS GATEKEEPER & ADAPTIEVE DREMPEL CONTROLE
+    # =====================================================================
+    pattern_st = load_pattern_state(asset, '15m')
+    if pattern_st:
+        boss_signal = pattern_st.get('pattern_signal', 'none')
+        boss_score = pattern_st.get('pattern_score', 50.0)
+        boss_leverage = int(pattern_st.get('recommended_leverage', 10))
+        boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 1.5))
+        
+        # Adaptieve drempels bepaald door de Final Boss
+        dynamic_min_score = float(pattern_st.get('min_score_required', 75.0))
+        strictness_mode = pattern_st.get('strictness_mode', 'strict')
+        is_squeeze = pattern_st.get('bollinger_squeeze', False)
+        
+        print(f"👑 [Final Boss] {asset}: Signaal={boss_signal.upper()} | Score={boss_score} (Vereist: {dynamic_min_score}, Modus: {strictness_mode}) | Lev={boss_leverage}x | Squeeze={is_squeeze}")
+        
+        if boss_signal != signal:
+            print(f"⛔ [FINAL BOSS VETO] Richting komt niet overeen met bot ('{boss_signal}' vs '{signal}').")
+            return
+        if boss_score < dynamic_min_score:
+            print(f"⛔ [FINAL BOSS VETO] Score ({boss_score}) is te laag volgens de agent zijn huidige regime ({dynamic_min_score}).")
+            return
+        print(f"✅ [FINAL BOSS GOEDKEURING] Groen licht onder '{strictness_mode}' regime!")
+    else:
+        print(f"⚠️ [Final Boss] Geen state gevonden voor {asset}; uit voorzorg overgeslagen.")
+        return
+
     sgn = 1 if is_long else -1
-    
-    # Gebruik de exact gelijgetrokken multipliers (2.5x TP / 1.5x SL)
-    stop_loss_val = price - sgn * SL_ATR_MULT * atr
+    stop_loss_val = price - sgn * boss_trailing_mult * atr
     take_profit_val = price + sgn * TP_ATR_MULT * atr
 
-    # ========== HARDE FILTERS ==========
+    # ========== HARDE & ZACHTE FILTERS ==========
     if atr_pct < MIN_ATR_PCT or atr_pct > MAX_ATR_PCT:
         return
     rrr = abs(take_profit_val - price) / abs(price - stop_loss_val)
-    if rrr < MIN_RRR:
-        return
-    if holdout_acc is None or holdout_acc < MIN_HOLDOUT_ACCURACY:
+    if rrr < MIN_RRR or holdout_acc is None or holdout_acc < MIN_HOLDOUT_ACCURACY:
         return
 
-    # ========== ZACHTE FILTERS (PUNTENYSTEEM) ==========
     score, max_score = 0, 4
-
-    # 1) 15m en 1h eens over de richting
     state_1h = load_state(asset, '1h')
     if state_1h is not None and state_1h['signal'] == signal:
         score += 1
 
-    # 2) BTC correlatie check
     if asset == 'BTC':
         score += 1
     elif ENABLE_BTC_CORRELATION:
@@ -411,7 +424,6 @@ def evaluate_and_trade(asset, symbol):
         if btc is not None and btc['signal'] != opposite:
             score += 1
 
-    # 3) Orderboek druk via API
     try:
         ob = exchange.fetch_order_book(symbol, limit=20)
         time.sleep(PAUSE_AFTER_CALL)
@@ -424,7 +436,6 @@ def evaluate_and_trade(asset, symbol):
     except Exception:
         pass
 
-    # 4) Funding rate check via API
     try:
         funding = exchange.fetch_funding_rate(symbol).get('fundingRate')
         time.sleep(PAUSE_AFTER_CALL)
@@ -434,22 +445,19 @@ def evaluate_and_trade(asset, symbol):
     except Exception:
         pass
 
-    direction_str = "LONG 📈" if is_long else "SHORT 📉"
-    print(f"Beoordeling {asset} ({direction_str}) -> Score {score}/{max_score} | Kans {prob:.1f}% | "
-          f"Move {pred_move_pct:.3f}% | ATR {atr_pct:.2f}% | Holdout-acc {holdout_acc:.2f}")
-
     if not (prob >= MIN_DIRECTION_PROBABILITY and pred_move_pct >= MIN_PREDICTED_RETURN_PCT and score >= MIN_SCORE):
         return
 
-    # ========== UITVOERING ==========
-    if not ensure_margin_and_leverage(symbol):
+    # ========== UITVOERING MET BOSS LEVERAGE ==========
+    if not ensure_margin_and_leverage(symbol, boss_leverage):
         return
-    amount = compute_contract_amount(symbol, price)
+    amount = compute_contract_amount(symbol, price, boss_leverage)
     if amount is None:
         return
 
     side = 'buy' if is_long else 'sell'
-    print(f"🔥 {direction_str} {symbol}: {amount} contracten | SL ${stop_loss_val:.4f} | TP ${take_profit_val:.4f}")
+    direction_str = "LONG 📈" if is_long else "SHORT 📉"
+    print(f"🔥 {direction_str} {symbol}: {amount} contracten | Lev: {boss_leverage}x | SL ${stop_loss_val:.4f} | TP ${take_profit_val:.4f}")
     if DRY_RUN:
         print("[DRY_RUN] Geen order geplaatst.")
         return
@@ -461,8 +469,7 @@ def evaluate_and_trade(asset, symbol):
     }
     try:
         order = exchange.create_order(symbol, 'market', side, amount, None, params)
-    except Exception as e:
-        print(f"⚠️ Order met SL/TP parameters mislukt ({repr(e)}); poging zonder...")
+    except Exception:
         try:
             order = exchange.create_order(symbol, 'market', side, amount, None,
                                           {'marginMode': DESIRED_MARGIN_MODE})
@@ -472,14 +479,19 @@ def evaluate_and_trade(asset, symbol):
 
     print(f"✅ Order geplaatst: {order.get('id') if isinstance(order, dict) else order}")
     active_trades[symbol] = {
-        'side': 'long' if is_long else 'short', 'entry': price, 'peak': price, 'atr': atr,
-        'sl': stop_loss_val, 'tp': take_profit_val,
+        'side': 'long' if is_long else 'short', 
+        'entry': price, 
+        'peak': price, 
+        'atr': atr,
+        'sl': stop_loss_val, 
+        'tp': take_profit_val,
+        'trailing_mult': boss_trailing_mult,
     }
 
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print(f"Futures Live Trader Worker gestart ({EXCHANGE_ID}, ${TRADE_AMOUNT_USDT} margin, {LEVERAGE}x {DESIRED_MARGIN_MODE}"
+    print(f"Futures Live Trader Worker (Final Boss Adaptief Verbonden) gestart ({EXCHANGE_ID}, ${TRADE_AMOUNT_USDT} margin, {DESIRED_MARGIN_MODE}"
           f"{', DRY_RUN' if DRY_RUN else ''}).")
     last_trade_check_time = 0
 
