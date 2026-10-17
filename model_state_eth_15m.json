@@ -1,6 +1,6 @@
 {
-    "learning_rate": 0.07500000000000007,
-    "lookback_window": 300,
+    "learning_rate": 0.06500000000000007,
+    "lookback_window": 280,
     "current_regime": "trending",
     "regime_features": {
         "trending": [
@@ -62,33 +62,48 @@
         "ATR_percentile",
         "CMF"
     ],
-    "last_trained_timestamp": 1792266330.4972215,
+    "last_trained_timestamp": 1792267276.3790221,
     "model_weights": {
-        "xgb": 0.25893220342209283,
-        "cat": 0.43231806134173134,
-        "rf": 0.3087497352361759
+        "xgb": 0.26071291308124145,
+        "cat": 0.396413661212063,
+        "rf": 0.3428734257066956
     },
     "model_errors": {
-        "xgb": 0.0013329056129872496,
-        "cat": 0.0007983289267801186,
-        "rf": 0.0011178378411982304
+        "xgb": 0.8909843561884302,
+        "cat": 0.5859816388914365,
+        "rf": 0.6774836120669454
     },
-    "baseline_error": 1.2775217989856136,
-    "last_prediction": 2419.0582547532435,
-    "last_prediction_price": 2419.0582547532435,
-    "predicted_return_pct": -0.0037924579607108034,
-    "direction_probability": 52.04580307006836,
+    "baseline_error": 1.124406789191412,
+    "last_prediction": 2421.167134456285,
+    "last_prediction_price": 2421.167134456285,
+    "predicted_return_pct": 11.731792006407385,
+    "direction_probability": 7.990384101867676,
     "signal": "none",
     "signal_probability": 50.0,
-    "holdout_direction_accuracy": 0.52,
-    "holdout_classifier_accuracy": 0.5333333333333333,
-    "holdout_samples": 75,
-    "atr": 4.845714285714231,
-    "atr_pct": 0.20030648309175664,
-    "last_close": 2419.15,
-    "last_candle_ts": 1792265400,
+    "holdout_direction_accuracy": 0.5,
+    "holdout_classifier_accuracy": 0.7692307692307693,
+    "holdout_samples": 26,
+    "atr": 4.549285714285653,
+    "atr_pct": 0.18811682914596656,
+    "last_close": 2418.33,
+    "last_candle_ts": 1792266300,
     "data_status": "ok",
     "stop_loss": 0.0,
     "take_profit": 0.0,
-    "updated_at": 1792266330
+    "updated_at": 1792267276,
+    "model_errors_pct": {
+        "xgb": 89.09843561884301,
+        "cat": 58.59816388914365,
+        "rf": 67.74836120669454
+    },
+    "model_errors_usd": {
+        "xgb": 2154.6941981011664,
+        "cat": 1417.0969767803276,
+        "rf": 1638.3789435698561
+    },
+    "model_errors_readable": {
+        "xgb": "2154.69 USD (89.10%)",
+        "cat": "1417.10 USD (58.60%)",
+        "rf": "1638.38 USD (67.75%)"
+    }
 }
