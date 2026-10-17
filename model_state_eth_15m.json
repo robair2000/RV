@@ -1,6 +1,6 @@
 {
-    "learning_rate": 0.09500000000000006,
-    "lookback_window": 260,
+    "learning_rate": 0.08500000000000006,
+    "lookback_window": 280,
     "current_regime": "trending",
     "regime_features": {
         "trending": [
@@ -60,33 +60,33 @@
         "lorentzian_dist",
         "ATR_percentile"
     ],
-    "last_trained_timestamp": 1792260940.8920763,
+    "last_trained_timestamp": 1792261849.5967014,
     "model_weights": {
-        "xgb": 0.2616458663824588,
-        "cat": 0.42692923940663974,
-        "rf": 0.31142489421090147
+        "xgb": 0.2566869860793139,
+        "cat": 0.4240957541887161,
+        "rf": 0.31921725973197007
     },
     "model_errors": {
-        "xgb": 0.0013666547493073739,
-        "cat": 0.0008375612809790971,
-        "rf": 0.0011482046644191648
+        "xgb": 0.0012864618207223193,
+        "cat": 0.0007786398161194719,
+        "rf": 0.0010344614361213168
     },
-    "baseline_error": 1.2813580604747588,
-    "last_prediction": 2416.4874616856737,
-    "last_prediction_price": 2416.4874616856737,
-    "predicted_return_pct": -0.011690740712865121,
-    "direction_probability": 28.329526901245117,
+    "baseline_error": 1.2560450642452041,
+    "last_prediction": 2417.575126288259,
+    "last_prediction_price": 2417.575126288259,
+    "predicted_return_pct": -0.05105294387490711,
+    "direction_probability": 44.94053268432617,
     "signal": "short",
-    "signal_probability": 71.67047309875488,
-    "holdout_direction_accuracy": 0.5538461538461539,
-    "holdout_classifier_accuracy": 0.5230769230769231,
-    "holdout_samples": 65,
-    "atr": 6.158571428571349,
-    "atr_pct": 0.2548265423921742,
-    "last_close": 2416.77,
-    "last_candle_ts": 1792260000,
+    "signal_probability": 55.05946731567383,
+    "holdout_direction_accuracy": 0.4714285714285714,
+    "holdout_classifier_accuracy": 0.5285714285714286,
+    "holdout_samples": 70,
+    "atr": 6.122142857142795,
+    "atr_pct": 0.2531055708031137,
+    "last_close": 2418.81,
+    "last_candle_ts": 1792260900,
     "data_status": "ok",
-    "stop_loss": 2426.007857142857,
-    "take_profit": 2401.3735714285717,
-    "updated_at": 1792260940
+    "stop_loss": 2427.993214285714,
+    "take_profit": 2403.504642857143,
+    "updated_at": 1792261849
 }
