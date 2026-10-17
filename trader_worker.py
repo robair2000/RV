@@ -41,6 +41,9 @@ DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
+# Risico & portfolio grenzen
+MAX_CONCURRENT_POSITIONS = 2  # Bescherming tegen over-exposure
+
 # Basis & risico drempels
 MIN_DIRECTION_PROBABILITY = float(os.environ.get('MIN_DIRECTION_PROBABILITY', 65.0))
 MIN_PREDICTED_RETURN_PCT = float(os.environ.get('MIN_PREDICTED_RETURN_PCT', 0.15))
@@ -78,6 +81,22 @@ exchange = getattr(ccxt, EXCHANGE_ID)({
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'},
 })
+
+
+# =====================================================================
+# HULPFUNCTIE: RETRY LOGICA MET BACKOFF
+# =====================================================================
+def execute_with_retry(func, retries=3, delay=2):
+    """Voert een exchange-actie uit met automatische hertry-logica bij netwerkfouten."""
+    for attempt in range(retries):
+        try:
+            return func()
+        except Exception as e:
+            if attempt == retries - 1:
+                raise e
+            print(f"⚠️ Exchange actie mislukt ({e}), poging {attempt + 1} van {retries} over {delay}s...")
+            time.sleep(delay)
+            delay *= 2
 
 
 # =====================================================================
@@ -148,8 +167,10 @@ def close_position(symbol, side, contracts):
         print(f"[DRY_RUN] Zou {symbol} sluiten ({close_side} {contracts})")
         return True
     try:
-        order = exchange.create_order(symbol, 'market', close_side, contracts, None,
-                                      {'reduceOnly': True, 'marginMode': DESIRED_MARGIN_MODE})
+        order = execute_with_retry(lambda: exchange.create_order(
+            symbol, 'market', close_side, contracts, None,
+            {'reduceOnly': True, 'marginMode': DESIRED_MARGIN_MODE}
+        ))
         print(f"✅ Positie {symbol} gesloten: {order.get('id') if isinstance(order, dict) else order}")
         return True
     except Exception as e:
@@ -166,7 +187,7 @@ def pnl_fraction(side, entry, price):
 
 def manage_open_positions_and_trailing_stops():
     try:
-        positions = exchange.fetch_positions()
+        positions = execute_with_retry(lambda: exchange.fetch_positions())
     except Exception as e:
         print(f"Fout bij ophalen open posities: {e}")
         return
@@ -234,7 +255,7 @@ def manage_open_positions_and_trailing_stops():
             
         if stop_hit or tp_hit:
             reason = 'stop' if stop_hit else 'take-profit'
-            print(f"🛑 {reason} geraakt voor {side} {symbol} op ${price}. Positie sluiten...")
+            print(f"🛑 {reason} geraakt voor {side} {symbol} auf ${price}. Positie sluiten...")
             if close_position(symbol, side, contracts):
                 if pnl_fraction(side, entry, price) < 0:
                     symbol_cooldowns[symbol] = time.time()
@@ -304,7 +325,7 @@ def compute_contract_amount(symbol, price, leverage):
 
 
 # =====================================================================
-# SCAN & EVALUATIE (MET FINAL BOSS GATEKEEPER)
+# SCAN & EVALUATIE (MET PORTFOLIO EXPOSURE & FINAL BOSS GATEKEEPER)
 # =====================================================================
 def resolve_symbol(asset):
     primary = f"{asset}/USDT:USDT"
@@ -328,10 +349,15 @@ def execute_live_trades_scan():
         return
 
     try:
-        active_symbols = {p.get('symbol') for p in exchange.fetch_positions()
-                          if abs(float(p.get('contracts') or 0)) > 0}
+        positions = execute_with_retry(lambda: exchange.fetch_positions())
+        active_symbols = {p.get('symbol') for p in positions if abs(float(p.get('contracts') or 0)) > 0}
     except Exception as e:
         print(f"⛔ Kan open posities niet ophalen ({e}); scan afgebroken.")
+        return
+
+    # --- PORTFOLIO EXPOSURE CHECK ---
+    if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
+        print(f"🛡️ Maximaal aantal gelijktijdige posities ({MAX_CONCURRENT_POSITIONS}) bereikt. Geen nieuwe trades.")
         return
 
     for asset in ASSETS:
@@ -382,7 +408,6 @@ def evaluate_and_trade(asset, symbol):
         boss_leverage = int(pattern_st.get('recommended_leverage', 10))
         boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 1.5))
         
-        # Adaptieve drempels bepaald door de Final Boss
         dynamic_min_score = float(pattern_st.get('min_score_required', 75.0))
         strictness_mode = pattern_st.get('strictness_mode', 'strict')
         is_squeeze = pattern_st.get('bollinger_squeeze', False)
@@ -448,7 +473,7 @@ def evaluate_and_trade(asset, symbol):
     if not (prob >= MIN_DIRECTION_PROBABILITY and pred_move_pct >= MIN_PREDICTED_RETURN_PCT and score >= MIN_SCORE):
         return
 
-    # ========== UITVOERING MET BOSS LEVERAGE ==========
+    # ========== UITVOERING MET BOSS LEVERAGE & RETRY WRAPPER ==========
     if not ensure_margin_and_leverage(symbol, boss_leverage):
         return
     amount = compute_contract_amount(symbol, price, boss_leverage)
@@ -468,13 +493,14 @@ def evaluate_and_trade(asset, symbol):
         'marginMode': DESIRED_MARGIN_MODE,
     }
     try:
-        order = exchange.create_order(symbol, 'market', side, amount, None, params)
+        order = execute_with_retry(lambda: exchange.create_order(symbol, 'market', side, amount, None, params))
     except Exception:
         try:
-            order = exchange.create_order(symbol, 'market', side, amount, None,
-                                          {'marginMode': DESIRED_MARGIN_MODE})
+            order = execute_with_retry(lambda: exchange.create_order(
+                symbol, 'market', side, amount, None, {'marginMode': DESIRED_MARGIN_MODE}
+            ))
         except Exception as e2:
-            print(f"⛔ Fout bij orderplaatsing {symbol}: {repr(e2)}")
+            print(f"⛔ Fout bij orderplaatsing {symbol} na retries: {repr(e2)}")
             return
 
     print(f"✅ Order geplaatst: {order.get('id') if isinstance(order, dict) else order}")
@@ -491,7 +517,7 @@ def evaluate_and_trade(asset, symbol):
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print(f"Futures Live Trader Worker (Final Boss Adaptief Verbonden) gestart ({EXCHANGE_ID}, ${TRADE_AMOUNT_USDT} margin, {DESIRED_MARGIN_MODE}"
+    print(f"Futures Live Trader Worker (RoBUUST & Adaptief Verbonden) gestart ({EXCHANGE_ID}, ${TRADE_AMOUNT_USDT} margin, {DESIRED_MARGIN_MODE}"
           f"{', DRY_RUN' if DRY_RUN else ''}).")
     last_trade_check_time = 0
 
