@@ -1,7 +1,7 @@
 {
     "learning_rate": 0.12999999999999998,
     "lookback_window": 300,
-    "current_regime": "sideways",
+    "current_regime": "trending",
     "regime_features": {
         "trending": [
             "return_1",
@@ -54,39 +54,41 @@
         "OBV_slope",
         "VWAP_dist",
         "Supertrend_dist",
-        "lorentzian_dist",
         "ATR_percentile",
+        "MACD_hist",
+        "CMF",
         "regime_score",
+        "lorentzian_dist",
         "ADX",
         "smc_zone_dist"
     ],
-    "last_trained_timestamp": 1792254637.5059633,
+    "last_trained_timestamp": 1792255522.762222,
     "model_weights": {
-        "xgb": 0.25187742886689946,
-        "cat": 0.3469416113879468,
-        "rf": 0.40118095974515366
+        "xgb": 0.19385799998914394,
+        "cat": 0.38443212452589076,
+        "rf": 0.42170987548496525
     },
     "model_errors": {
-        "xgb": 0.0006491274925579704,
-        "cat": 0.0004712622049400463,
-        "rf": 0.0004075477924791102
+        "xgb": 0.0009253267645048184,
+        "cat": 0.00046661502482507573,
+        "rf": 0.0004253677195611452
     },
-    "baseline_error": 1.2121791024299002,
-    "last_prediction": 81250.3088243731,
-    "last_prediction_price": 81250.3088243731,
-    "predicted_return_pct": -0.0832425485463286,
-    "direction_probability": 58.9324951171875,
-    "signal": "none",
-    "signal_probability": 50.0,
-    "holdout_direction_accuracy": 0.5466666666666666,
-    "holdout_classifier_accuracy": 0.48,
+    "baseline_error": 1.2408536595125723,
+    "last_prediction": 81285.56797066319,
+    "last_prediction_price": 81285.56797066319,
+    "predicted_return_pct": -0.022793474544097643,
+    "direction_probability": 42.717342376708984,
+    "signal": "short",
+    "signal_probability": 57.282657623291016,
+    "holdout_direction_accuracy": 0.5066666666666667,
+    "holdout_classifier_accuracy": 0.4666666666666667,
     "holdout_samples": 75,
-    "atr": 70.0142857142855,
-    "atr_pct": 0.08609937002174858,
-    "last_close": 81318.0,
-    "last_candle_ts": 1792253700,
+    "atr": 69.24285714285672,
+    "atr_pct": 0.08516527105380506,
+    "last_close": 81304.1,
+    "last_candle_ts": 1792254600,
     "data_status": "ok",
-    "stop_loss": 81423.02142857143,
-    "take_profit": 81142.96428571429,
-    "updated_at": 1792254637
+    "stop_loss": 81407.96428571429,
+    "take_profit": 81130.99285714286,
+    "updated_at": 1792255522
 }
