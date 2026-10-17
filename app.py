@@ -136,7 +136,7 @@ if df is not None and not df.empty:
                 col5, col6, col7, col8 = st.columns(4)
                 col5.metric("Boss Modus", strictness.capitalize())
                 col6.metric("Aanbevolen Hefboom", f"{rec_leverage}x")
-                col7.metric("Bollinger Squeeze", "🔥 Actief" _ if is_squeeze else "Rustig")
+                col7.metric("Bollinger Squeeze", "🔥 Actief" if is_squeeze else "Rustig")
                 col8.metric("Kans op stijging (Quant)", f"{prob:.1f}%")
 
                 # --- RIJ 3: Stop-Loss, Take-Profit & Model Details ---
