@@ -1,6 +1,6 @@
 {
-    "learning_rate": 0.10999999999999999,
-    "lookback_window": 260,
+    "learning_rate": 0.09999999999999999,
+    "lookback_window": 240,
     "current_regime": "trending",
     "regime_features": {
         "trending": [
@@ -18,7 +18,6 @@
             "MACD_hist",
             "CMF",
             "regime_score",
-            "lorentzian_dist",
             "ADX",
             "smc_zone_dist"
         ],
@@ -56,37 +55,36 @@
         "MACD_hist",
         "CMF",
         "regime_score",
-        "lorentzian_dist",
         "ADX",
         "smc_zone_dist"
     ],
-    "last_trained_timestamp": 1792263643.422119,
+    "last_trained_timestamp": 1792264523.2130866,
     "model_weights": {
-        "xgb": 0.25297617324324806,
-        "cat": 0.4012106188808191,
-        "rf": 0.3458132078759329
+        "xgb": 0.3056202345422225,
+        "cat": 0.3382605042406962,
+        "rf": 0.3561192612170813
     },
     "model_errors": {
-        "xgb": 0.0006587926990768489,
-        "cat": 0.00041538957319599957,
-        "rf": 0.00048193290290927607
+        "xgb": 0.00047076498162256045,
+        "cat": 0.000425338665477495,
+        "rf": 0.0004040086265118431
     },
-    "baseline_error": 1.2770561955824218,
-    "last_prediction": 81487.60612934743,
-    "last_prediction_price": 81487.60612934743,
-    "predicted_return_pct": -0.026124595783482297,
-    "direction_probability": 38.54756164550781,
+    "baseline_error": 1.1378603582343796,
+    "last_prediction": 81530.26579138759,
+    "last_prediction_price": 81530.26579138759,
+    "predicted_return_pct": -0.004579940408188289,
+    "direction_probability": 24.341482162475586,
     "signal": "short",
-    "signal_probability": 61.45243835449219,
-    "holdout_direction_accuracy": 0.47692307692307695,
-    "holdout_classifier_accuracy": 0.5384615384615384,
-    "holdout_samples": 65,
-    "atr": 85.94999999999916,
-    "atr_pct": 0.10544860745268206,
-    "last_close": 81508.9,
-    "last_candle_ts": 1792262700,
+    "signal_probability": 75.65851783752441,
+    "holdout_direction_accuracy": 0.4666666666666667,
+    "holdout_classifier_accuracy": 0.5166666666666667,
+    "holdout_samples": 60,
+    "atr": 86.0642857142853,
+    "atr_pct": 0.10555631480644308,
+    "last_close": 81534.0,
+    "last_candle_ts": 1792263600,
     "data_status": "ok",
-    "stop_loss": 81637.825,
-    "take_profit": 81294.025,
-    "updated_at": 1792263643
+    "stop_loss": 81663.09642857143,
+    "take_profit": 81318.83928571429,
+    "updated_at": 1792264523
 }
