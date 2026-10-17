@@ -197,25 +197,41 @@ def manage_open_positions_and_trailing_stops():
             }
 
         atr = trade['atr']
+        
+        # Bereken het huidige rendement in decimalen (bijv. 0.015 = 1.5% winst)
+        current_pnl_pct = pnl_fraction(side, entry, price)
+        
         if side == 'long':
             if price > trade['peak']:
                 trade['peak'] = price
-                new_sl = price - SL_ATR_MULT * atr
-                if new_sl > trade['sl']:
-                    trade['sl'] = new_sl
-                    print(f"📈 Trailing stop {symbol} omhoog naar ${trade['sl']:.4f}")
+                
+                # TRAILING STOP PAS ACTIVEREN BIJ >= 1.5% WINST (0.015)
+                if current_pnl_pct >= 0.015:
+                    new_sl = price - SL_ATR_MULT * atr
+                    if new_sl > trade['sl']:
+                        trade['sl'] = new_sl
+                        print(f"📈 Trailing stop {symbol} geactiveerd/omhoog naar ${trade['sl']:.4f} (Winst: {current_pnl_pct*100:.2f}%)")
+                else:
+                    print(f"⏳ {symbol} winst is {current_pnl_pct*100:.2f}% (< 1.5%); trailing stop schuift nog niet mee.")
+                    
             stop_hit = price <= trade['sl']
             tp_hit = price >= trade['tp']
         else:
             if price < trade['peak']:
                 trade['peak'] = price
-                new_sl = price + SL_ATR_MULT * atr
-                if new_sl < trade['sl']:
-                    trade['sl'] = new_sl
-                    print(f"📉 Trailing stop {symbol} omlaag naar ${trade['sl']:.4f}")
+                
+                # TRAILING STOP PAS ACTIVEREN BIJ >= 1.5% WINST (0.015)
+                if current_pnl_pct >= 0.015:
+                    new_sl = price + SL_ATR_MULT * atr
+                    if new_sl < trade['sl']:
+                        trade['sl'] = new_sl
+                        print(f"📉 Trailing stop {symbol} geactiveerd/omlaag naar ${trade['sl']:.4f} (Winst: {current_pnl_pct*100:.2f}%)")
+                else:
+                    print(f"⏳ {symbol} winst is {current_pnl_pct*100:.2f}% (< 1.5%); trailing stop schuift nog niet mee.")
+                    
             stop_hit = price >= trade['sl']
             tp_hit = price <= trade['tp']
-
+            
         if stop_hit or tp_hit:
             reason = 'stop' if stop_hit else 'take-profit'
             print(f"🛑 {reason} geraakt voor {side} {symbol} op ${price}. Positie sluiten...")
