@@ -62,7 +62,7 @@
         "ATR_percentile",
         "regime_score"
     ],
-    "last_trained_timestamp": 1792264559.1956613,
+    "last_trained_timestamp": 1792265455.9997253,
     "model_weights": {
         "xgb": 0.3267854551881681,
         "cat": 0.32491039416113365,
@@ -90,5 +90,5 @@
     "data_status": "ok",
     "stop_loss": 11.987975,
     "take_profit": 12.157375,
-    "updated_at": 1792264559
+    "updated_at": 1792265455
 }
