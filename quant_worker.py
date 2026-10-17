@@ -587,9 +587,14 @@ def process(df_raw, state, now, symbol):
     weights = chosen_res['weights']
 
     pred_ret = {}
+    # Maak er een 2D NumPy array van zodat .reshape() wel werkt
+    latest_arr = latest.to_numpy() if hasattr(latest, 'to_numpy') else np.asarray(latest)
+    if latest_arr.ndim == 1:
+        latest_arr = latest_arr.reshape(1, -1)
+
     for name, model in make_regressors(lr).items():
         model.fit(X, y)
-        pred_ret[name] = float(model.predict(latest.reshape(1, -1))[0])
+        pred_ret[name] = float(model.predict(latest_arr)[0])
     ens_ret = float(sum(weights[k] * pred_ret[k] for k in pred_ret))
 
     prob_up = 50.0
@@ -598,10 +603,9 @@ def process(df_raw, state, now, symbol):
         try:
             clf = make_classifier(lr)
             clf.fit(X, y_cls)
-            prob_up = float(clf.predict_proba(latest.reshape(1, -1))[0][1] * 100)
+            prob_up = float(clf.predict_proba(latest_arr)[0][1] * 100)
         except Exception:
             prob_up = 50.0
-
     last_close = float(df['close'].iloc[-1])
     atr = df['ATR'].iloc[-1]
     atr = float(atr) if pd.notna(atr) and atr > 0 else last_close * 0.02
