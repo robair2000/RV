@@ -72,8 +72,8 @@ def fetch_historical_candles(symbol, timeframe, limit=120):
 
 def analyze_advanced_patterns(df_15m, df_1h):
     """
-    De Final Boss analyse: combineert candlestick patronen, Bollinger Band squeezes,
-    RSI momentum, multi-timeframe convergentie en bepaalt dynamisch leverage + trailing stops.
+    De Final Boss analyse met adaptief leervermogen: combineert candlestick patronen, 
+    Bollinger Squeezes, RSI momentum en past dynamisch de strengheid (flexibiliteit) aan.
     """
     if df_15m is None or len(df_15m) < 40 or df_1h is None or len(df_1h) < 40:
         return {
@@ -81,6 +81,8 @@ def analyze_advanced_patterns(df_15m, df_1h):
             'pattern_signal': 'none', 
             'recommended_leverage': 1, 
             'recommended_trailing_mult': 1.5,
+            'min_score_required': 75.0,
+            'strictness_mode': 'strict',
             'confidence': 0.0
         }
 
@@ -120,7 +122,8 @@ def analyze_advanced_patterns(df_15m, df_1h):
             'is_volume_spike': bool(is_volume_spike),
             'is_bull_eng': bool(is_bull_eng),
             'is_bear_eng': bool(is_bear_eng),
-            'trend': float((close.iloc[-1] - close.iloc[-5]) / close.iloc[-5])
+            'trend': float((close.iloc[-1] - close.iloc[-5]) / close.iloc[-5]),
+            'volatility': float(std20.iloc[-1] / close.iloc[-1])
         }
 
     ind_15m = compute_indicators(df_15m)
@@ -147,24 +150,31 @@ def analyze_advanced_patterns(df_15m, df_1h):
 
     score = min(float(score), 98.0)
 
-    # --- DYNAMISCHE LEVERAGE & TRAILING STOP DOOR DE FINAL BOSS ---
+    # --- ADAPTIEF LEREN: BEPAAL FLEXIBILITEIT & EISEN ---
+    # Bij hoge volatiliteit versoepelt de agent de drempel enigszins; in rustige markten is hij streng.
+    strictness_mode = 'strict'
+    min_score_required = 75.0
+    
+    if ind_15m['volatility'] > 0.02:
+        strictness_mode = 'flexible'
+        min_score_required = 70.0
+    else:
+        strictness_mode = 'strict'
+        min_score_required = 80.0
+
+    # --- DYNAMISCHE LEVERAGE & TRAILING STOP ---
     leverage = 1
     trailing_mult = 1.5
 
     if signal != 'none':
-        if score >= 85 and ind_15m['is_squeeze']:
-            leverage = 15
-        elif score >= 75:
-            leverage = 10
-        else:
-            leverage = 5
-
+        leverage = 15 if (score >= 85 and ind_15m['is_squeeze']) else (10 if score >= min_score_required else 5)
+        
         if ind_15m['is_squeeze']:
             trailing_mult = 2.0  # Meer ademruimte tijdens breakout
         elif score >= 90:
-            trailing_mult = 1.2  # Zeer sterke overtuiging, strakke bescherming
+            trailing_mult = 1.2  # Strakke bescherming
         else:
-            trailing_mult = 1.5  # Standaard ATR multiplier
+            trailing_mult = 1.5
     else:
         score = 50.0
 
@@ -173,6 +183,8 @@ def analyze_advanced_patterns(df_15m, df_1h):
         'pattern_signal': signal,
         'recommended_leverage': int(leverage),
         'recommended_trailing_mult': float(trailing_mult),
+        'min_score_required': float(min_score_required),
+        'strictness_mode': strictness_mode,
         'rsi_15m': round(ind_15m['rsi'], 2),
         'rsi_1h': round(ind_1h['rsi'], 2),
         'volume_spike': ind_15m['is_volume_spike'],
@@ -225,7 +237,7 @@ def push_state_to_github(filename, data):
 
 
 def run_final_boss_scan():
-    print("--- [Final Boss Agent] Start evaluatie ---")
+    print("--- [Final Boss Agent] Start adaptieve evaluatie ---")
     try:
         exchange.load_markets()
     except Exception as e:
@@ -244,14 +256,13 @@ def run_final_boss_scan():
             analysis = analyze_advanced_patterns(df_15m, df_1h)
             filename = f'pattern_state_{asset.lower()}_15m.json'
             push_state_to_github(filename, analysis)
-            print(f"👑 {asset} Final Boss: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']} | Lev={analysis['recommended_leverage']}x | Trail={analysis['recommended_trailing_mult']}x")
+            print(f"👑 {asset} Final Boss: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']} | Min.Vereist={analysis['min_score_required']} ({analysis['strictness_mode']}) | Lev={analysis['recommended_leverage']}x")
         time.sleep(2.0)
 
 
 if __name__ == '__main__':
-    # Start de webserver op een achtergrondthread voor Render port-binding & health checks
     threading.Thread(target=run_server, daemon=True).start()
-    print("🚀 Final Boss Agent Web Service gestart.")
+    print("🚀 Final Boss Agent Web Service (Adaptief) gestart.")
 
     while True:
         try:
