@@ -421,6 +421,7 @@ def compute_contract_amount(asset, symbol, price, leverage):
 
 
 def execute_live_trades_scan(symbols):
+    print(f"🔍 [Trader Worker] Start marktscan voor symbolen: {symbols}")
     current_time = time.time()
     expired_cooldowns = [sym for sym, ts in symbol_cooldowns.items() if current_time - ts > COOLDOWN_SECONDS]
     for sym in expired_cooldowns:
@@ -431,7 +432,8 @@ def execute_live_trades_scan(symbols):
         exchange.load_markets()
         positions = execute_with_retry(lambda: exchange.fetch_positions())
         open_orders = execute_with_retry(lambda: exchange.fetch_open_orders())
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Fout bij ophalen posities/orders van KuCoin: {e}")
         return
 
     active_symbols = set()
@@ -445,6 +447,7 @@ def execute_live_trades_scan(symbols):
             pending_order_symbols.add(o.get('symbol'))
 
     if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
+        print(f"ℹ️ Maximaal aantal actieve posities bereikt ({len(active_symbols)}/{MAX_CONCURRENT_POSITIONS}).")
         return
 
     for symbol in symbols:
@@ -456,18 +459,21 @@ def execute_live_trades_scan(symbols):
             continue
         try:
             asset = symbol.split('/')[0].split(':')[0]
+            print(f"🔎 Evalueren van {symbol} (Asset: {asset})...")
             evaluate_and_trade(asset, symbol)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️ Fout bij evalueren van {symbol}: {e}")
 
 
 def evaluate_and_trade(asset, symbol):
     state_4h = load_state(asset, '4h')
     if state_4h is None:
+        print(f"   ⏳ {symbol}: Geen geldige 4h state gevonden of state is te oud.")
         return
 
     quant_signal = state_4h['signal']
     if quant_signal not in ('long', 'short'):
+        print(f"   ℹ️ {symbol}: Quant signaal is neutraal ('{quant_signal}').")
         return
 
     price = float(exchange.fetch_ticker(symbol)['last'])
@@ -478,6 +484,7 @@ def evaluate_and_trade(asset, symbol):
 
     pattern_st = load_pattern_state(asset)
     if pattern_st is None:
+        print(f"   ⏳ {symbol}: Geen S&R pattern state gevonden voor 4h.")
         return
 
     boss_signal = pattern_st.get('pattern_signal', 'none')
@@ -486,15 +493,20 @@ def evaluate_and_trade(asset, symbol):
     boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 2.5))
     min_score_req = pattern_st.get('min_score_required', MIN_BOSS_SCORE)
 
+    print(f"   📊 {symbol}: Quant={quant_signal.upper()} | Boss={boss_signal.upper()} | Score={boss_score} (Min. vereist: {min_score_req})")
+
     if boss_signal != quant_signal or boss_score < min_score_req:
+        print(f"   🚫 {symbol}: VETO - Signalen komen niet overeen of score is te laag.")
         return
 
     is_long = (quant_signal == 'long')
 
     direction_prob = float(state_4h.get('direction_probability', 50.0))
     if is_long and direction_prob < 50.0:
+        print(f"   🚫 {symbol}: Quant kans op stijging te laag ({direction_prob}%).")
         return
     if not is_long and direction_prob > 50.0:
+        print(f"   🚫 {symbol}: Quant kans op daling te laag ({direction_prob}%).")
         return
 
     if is_long:
@@ -508,6 +520,7 @@ def evaluate_and_trade(asset, symbol):
     take_profit_val = limit_price + sgn * effective_tp_mult * atr
 
     if not ensure_margin_and_leverage(symbol, boss_leverage):
+        print(f"   ⚠️ {symbol}: Kon hefboom/margin mode niet instellen.")
         return
         
     amount = compute_contract_amount(asset, symbol, limit_price, boss_leverage)
@@ -516,6 +529,7 @@ def evaluate_and_trade(asset, symbol):
 
     side = 'buy' if is_long else 'sell'
     if DRY_RUN:
+        print(f"   🧪 [DRY RUN] Zou order plaatsen: {side} {amount}x {symbol} op limietprijs {limit_price}")
         return
 
     params = {
@@ -525,6 +539,7 @@ def evaluate_and_trade(asset, symbol):
     }
     try:
         order = execute_with_retry(lambda: exchange.create_order(symbol, 'limit', side, amount, limit_price, params))
+        print(f"   🚀 SUCCES: Limit order geplaatst voor {symbol} ({side} {amount} contracten @ {limit_price})!")
         active_trades[symbol] = {
             'side': 'long' if is_long else 'short', 
             'entry': limit_price, 'peak': limit_price, 'atr': atr,
@@ -534,11 +549,12 @@ def evaluate_and_trade(asset, symbol):
         }
         push_trader_status_to_github()
     except Exception as e:
-        print(f"Fout bij plaatsen zone-based limit order voor {symbol}: {e}")
+        print(f"   ❌ Fout bij plaatsen zone-based limit order voor {symbol}: {e}")
 
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
+    print("🚀 V20 Trader Worker gestart (scan interval: 60 seconden).")
     while True:
         try:
             pull_ranking_from_github()
@@ -547,5 +563,5 @@ if __name__ == '__main__':
             manage_open_positions_and_trailing_stops(current_symbols)
             execute_live_trades_scan(current_symbols)
         except Exception as e:
-            print(f"Fout in trader lus: {e}")
+            print(f"⚠️ Fout in trader lus: {e}")
         time.sleep(60)
