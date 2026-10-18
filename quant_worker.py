@@ -67,7 +67,6 @@ try:
     print("🔄 Start automatische marktscan via getcoins.py...")
     subprocess.run(["python", "getcoins.py"], check=True)
     print("✅ Marktscan succesvol voltooid. CSV is bijgewerkt.")
-    # Push de verse ranking direct naar GitHub zodat agent en trader deze kunnen ophalen
     push_file_to_github('kucoin_best_coins_ranking.csv')
 except Exception as e:
     print(f"⚠️ Kon getcoins.py niet uitvoeren of pushen: {e}. We gebruiken de bestaande CSV indien aanwezig.")
@@ -75,31 +74,31 @@ except Exception as e:
 # --- STAP 2: DYNAMISCHE ASSET SELECTIE (Kern + Scanner Top 5) ---
 def get_combined_trading_symbols(top_n=5):
     """
-    Combineert altijd de vaste kern (BTC, ETH, LINK) met de 
-    dynamische Top N uit de V20 ranking scanner (kucoin_best_coins_ranking.csv).
+    Combineert altijd de vaste kern met de dynamische Top N uit de ranking CSV,
+    waarbij we direct de correcte volledige futures symbolen behouden.
     """
-    core_assets = ['BTC', 'ETH', 'LINK']
+    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
-    dynamic_assets = []
+    dynamic_symbols = []
     
     if os.path.exists(ranking_file):
         try:
             df = pd.read_csv(ranking_file)
-            symbols = df['Symbol'].head(top_n).tolist()
-            for s in symbols:
-                asset_name = s.split('/')[0].split(':')[0]
-                if asset_name not in dynamic_assets:
-                    dynamic_assets.append(asset_name)
-            print(f"📈 Dynamische top {top_n} geladen uit scanner: {dynamic_assets}")
+            if 'Symbol' in df.columns:
+                symbols = df['Symbol'].head(top_n).tolist()
+                for s in symbols:
+                    if s not in dynamic_symbols and ':USDT' in s:
+                        dynamic_symbols.append(s)
+            print(f"📈 Dynamische top {top_n} geladen uit scanner: {dynamic_symbols}")
         except Exception as e:
             print(f"⚠️ Fout bij lezen van ranking CSV: {e}")
             
-    combined = list(dict.fromkeys(core_assets + dynamic_assets))
-    print(f"🎯 Definitieve actieve trading scope ({len(combined)} assets): {combined}")
+    combined = list(dict.fromkeys(core_symbols + dynamic_symbols))
+    print(f"🎯 Definitieve actieve trading scope ({len(combined)} symbols): {combined}")
     return combined
 
-# Haal direct bij start de actieve assets op
-assets = get_combined_trading_symbols(top_n=5)
+# Haal direct bij start de actieve symbolen op
+symbols_scope = get_combined_trading_symbols(top_n=5)
 
 timeframes = {
     '4h': {'interval': '4h', 'limit': 500, 'min_interval_seconds': 3 * 3600},
@@ -577,8 +576,10 @@ def push_to_github(files):
 
 def main():
     written = []
-    for asset in assets:
-        symbol = f'{asset}/USDT'
+    for symbol in symbols_scope:
+        # Haal de korte asset naam eruit voor de filenaam (bijv. BTC uit BTC/USDT:USDT)
+        asset = symbol.split('/')[0].split(':')[0]
+        
         for tf_name, tf_info in timeframes.items():
             state_file = f'model_state_{asset.lower()}_{tf_name}.json'
             try:
