@@ -17,12 +17,51 @@ st.set_page_config(
 st.title("⚡ RV Institutional S&R / S&D Swing Hub (V20)")
 st.markdown("*Real-time ML Meta-Labeling, S&R Confluence Gatekeeper & Live Exchange Posities*")
 
+GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
+GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
+
+def load_json_from_github_or_local(filename):
+    """Probeert het JSON-bestand direct vers van GitHub op te halen, valt anders terug op lokaal."""
+    token = os.environ.get('GITHUB_TOKEN', '')
+    url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
+    headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'v20-dashboard'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception:
+        # Fallback naar lokaal bestand als GitHub faalt
+        if os.path.exists(filename):
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return {}
+
 # --- DYNAMISCHE ASSET SELECTIE UIT RANKING CSV ---
 def get_dashboard_trading_assets(top_n=5):
     core_assets = ['BTC', 'ETH', 'SOL', 'AVAX', 'LINK']
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_assets = []
     
+    # Probeer ranking ook vers op te halen
+    try:
+        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{ranking_file}?ref={GITHUB_BRANCH}'
+        token = os.environ.get('GITHUB_TOKEN', '')
+        headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'v20-dashboard'}
+        if token:
+            headers['Authorization'] = f'Bearer {token}'
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            with open(ranking_file, 'wb') as f:
+                f.write(resp.read())
+    except Exception:
+        pass
+
     if os.path.exists(ranking_file):
         try:
             df = pd.read_csv(ranking_file)
@@ -137,7 +176,7 @@ with tab1:
         else:
             st.info("ℹ️ Geen actieve openstaande posities gevonden op je KuCoin Futures account op dit moment.")
     except Exception as e:
-        st.warning(f"⚠️ Kon live posities niet ophalen van KuCoin (Controleer je API-keys in de Render environment variables): {e}")
+        st.warning(f"⚠️ Kon live posities niet ophalen van KuCoin: {e}")
 
     st.markdown("---")
 
@@ -145,28 +184,15 @@ with tab1:
     symbol = f"{asset_code}/USDT"
     df = load_dashboard_data(symbol, interval_info)
 
-    # State bestanden - Strikt gescheiden!
+    # State bestanden - Altijd vers ophalen van GitHub!
     state_file = f"model_state_{asset_code.lower()}_{interval_code}.json"
     pattern_file = f"pattern_state_{asset_code.lower()}_4h.json"
 
     if df is not None and not df.empty:
         current_price = float(df['close'].iloc[-1])
         
-        boss_state = {}
-        if os.path.exists(pattern_file):
-            try:
-                with open(pattern_file, 'r', encoding='utf-8') as f:
-                    boss_state = json.load(f)
-            except Exception:
-                pass
-
-        state = {}
-        if os.path.exists(state_file):
-            try:
-                with open(state_file, 'r', encoding='utf-8') as f:
-                    state = json.load(f)
-            except Exception:
-                pass
+        boss_state = load_json_from_github_or_local(pattern_file)
+        state = load_json_from_github_or_local(state_file)
 
         predicted_price = state.get('last_prediction')
         prob = state.get('direction_probability', 50.0)
@@ -176,15 +202,12 @@ with tab1:
         
         if predicted_price is not None:
             signal = state.get('signal')
-            
-            # Altijd vers berekenen t.o.v. de huidige live koers
             pred_ret_pct = ((predicted_price - current_price) / current_price) * 100
-            
             skill = state.get('baseline_error')
 
             boss_signal = boss_state.get('pattern_signal', 'none')
             boss_score = boss_state.get('pattern_score', 50.0)
-            min_score_req = boss_state.get('min_score_required', 84.0)
+            min_score_req = boss_state.get('min_score_required', 75.0)
             strictness = boss_state.get('strictness_mode', 'v20_sr_sd_confluence')
             rec_leverage = boss_state.get('recommended_leverage', 2)
 
@@ -248,31 +271,26 @@ with tab2:
     
     with col_s1:
         st.markdown("#### 🤖 Trader Worker Status (`trader_status.json`)")
-        trader_status_file = "trader_status.json"
-        if os.path.exists(trader_status_file):
-            try:
-                with open(trader_status_file, 'r', encoding='utf-8') as f:
-                    t_status = json.load(f)
-                up_time = t_status.get('updated_at', 0)
-                if up_time > 0:
-                    time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(up_time))
-                    st.caption(f"Laatst bijgewerkt: {time_str}")
-                
-                active_t = t_status.get('active_trades', {})
-                if active_t:
-                    st.warning(f"🚨 **Bot Beheerde Trades / Limit Orders:** {len(active_t)} openstaand")
-                    st.json(active_t)
-                else:
-                    st.info("ℹ️ Geen actieve bot-trades of open zone-limit orders op dit moment.")
-                
-                cooldowns = t_status.get('cooldowns', {})
-                if cooldowns:
-                    st.markdown("**Actieve Cooldowns:**")
-                    st.json(cooldowns)
-            except Exception as e:
-                st.error(f"Kon trader status niet laden: {e}")
+        t_status = load_json_from_github_or_local("trader_status.json")
+        if t_status:
+            up_time = t_status.get('updated_at', 0)
+            if up_time > 0:
+                time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(up_time))
+                st.caption(f"Laatst bijgewerkt: {time_str}")
+            
+            active_t = t_status.get('active_trades', {})
+            if active_t:
+                st.warning(f"🚨 **Bot Beheerde Trades / Limit Orders:** {len(active_t)} openstaand")
+                st.json(active_t)
+            else:
+                st.info("ℹ️ Geen actieve bot-trades of open zone-limit orders op dit moment.")
+            
+            cooldowns = t_status.get('cooldowns', {})
+            if cooldowns:
+                st.markdown("**Actieve Cooldowns:**")
+                st.json(cooldowns)
         else:
-            st.info("⏳ Nog geen trader status bestand lokaal aanwezig. De `trader_worker` moet nog draaien.")
+            st.info("⏳ Nog geen trader status bestand beschikbaar.")
 
     with col_s2:
         st.markdown("#### 🏆 Markt Scanner Ranking (`kucoin_best_coins_ranking.csv`)")
@@ -284,8 +302,8 @@ with tab2:
             except Exception as e:
                 st.error(f"Fout bij inlezen ranking CSV: {e}")
         else:
-            st.warning("⏳ Ranking CSV nog niet beschikbaar. Wacht op de marktscanner.")
+            st.warning("⏳ Ranking CSV nog niet beschikbaar.")
 
     st.markdown("---")
     st.markdown("#### 🔄 Worker Synchronisatie & GitHub Status")
-    st.info("Alle workers (`quant_worker`, `agent`, `trader_worker`) synchroniseren hun modelstates en status via de GitHub repository (`robair2000/RV`). Controleer de Render logs van de afzonderlijke services voor gedetailleerde console-uitvoer.")
+    st.info("Alle workers synchroniseren direct via GitHub. Het dashboard haalt nu altijd de meest recente data op.")
