@@ -87,7 +87,6 @@ exchange = getattr(ccxt, EXCHANGE_ID)({
 # HULPFUNCTIE: RETRY LOGICA MET BACKOFF
 # =====================================================================
 def execute_with_retry(func, retries=3, delay=2):
-    """Voert een exchange-actie uit met automatische hertry-logica bij netwerkfouten."""
     for attempt in range(retries):
         try:
             return func()
@@ -239,7 +238,7 @@ def manage_open_positions_and_trailing_stops():
                     new_sl = price - trail_mult * atr
                     if new_sl > trade['sl']:
                         trade['sl'] = new_sl
-                        print(f"📈 Trailing stop {symbol} geactiveerd naar ${trade['sl']:.4f} (Boss mult: {trail_mult}x, Winst: {current_pnl_pct*100:.2f}%)")
+                        print(f"📈 Trailing stop {symbol} geactiveerd naar ${trade['sl']:.4f} (Boss mult: {trail_mult}x)")
             stop_hit = price <= trade['sl']
             tp_hit = price >= trade['tp']
         else:
@@ -249,13 +248,13 @@ def manage_open_positions_and_trailing_stops():
                     new_sl = price + trail_mult * atr
                     if new_sl < trade['sl']:
                         trade['sl'] = new_sl
-                        print(f"📉 Trailing stop {symbol} geactiveerd naar ${trade['sl']:.4f} (Boss mult: {trail_mult}x, Winst: {current_pnl_pct*100:.2f}%)")
+                        print(f"📉 Trailing stop {symbol} geactiveerd naar ${trade['sl']:.4f} (Boss mult: {trail_mult}x)")
             stop_hit = price >= trade['sl']
-            tp_hit = price <= trade['tp']
+            tp_hit = price <= tp_hit if 'tp_hit' in locals() else price <= trade['tp']
             
         if stop_hit or tp_hit:
             reason = 'stop' if stop_hit else 'take-profit'
-            print(f"🛑 {reason} geraakt voor {side} {symbol} auf ${price}. Positie sluiten...")
+            print(f"🛑 {reason} geraakt voor {side} {symbol} op ${price}. Positie sluiten...")
             if close_position(symbol, side, contracts):
                 if pnl_fraction(side, entry, price) < 0:
                     symbol_cooldowns[symbol] = time.time()
@@ -355,9 +354,8 @@ def execute_live_trades_scan():
         print(f"⛔ Kan open posities niet ophalen ({e}); scan afgebroken.")
         return
 
-    # --- PORTFOLIO EXPOSURE CHECK ---
     if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
-        print(f"🛡️ Maximaal aantal gelijktijdige posities ({MAX_CONCURRENT_POSITIONS}) bereikt. Geen nieuwe trades.")
+        print(f"🛡️ Maximaal aantal gelijktijdige posities ({MAX_CONCURRENT_POSITIONS}) bereikt.")
         return
 
     for asset in ASSETS:
@@ -422,18 +420,25 @@ def evaluate_and_trade(asset, symbol):
             return
         print(f"✅ [FINAL BOSS GOEDKEURING] Groen licht onder '{strictness_mode}' regime!")
     else:
-        print(f"⚠️ [Final Boss] Geen state gevonden voor {asset}; uit voorzorg overgeslagen.")
+        print(f"⚠️ [Final Boss] Geen state gevonden voor {asset}; overgeslagen.")
         return
 
     sgn = 1 if is_long else -1
     stop_loss_val = price - sgn * boss_trailing_mult * atr
     take_profit_val = price + sgn * TP_ATR_MULT * atr
 
-    # ========== HARDE & ZACHTE FILTERS ==========
+    # ========== HARDE & ZACHTE FILTERS (MET DEBUG LOGS) ==========
     if atr_pct < MIN_ATR_PCT or atr_pct > MAX_ATR_PCT:
+        print(f"⛔ [FILTER VETO] ATR% ({atr_pct:.2f}%) buiten bereik [{MIN_ATR_PCT}, {MAX_ATR_PCT}].")
         return
+        
     rrr = abs(take_profit_val - price) / abs(price - stop_loss_val)
-    if rrr < MIN_RRR or holdout_acc is None or holdout_acc < MIN_HOLDOUT_ACCURACY:
+    if rrr < MIN_RRR:
+        print(f"⛔ [FILTER VETO] RRR ({rrr:.2f}) is lager dan vereist ({MIN_RRR}).")
+        return
+        
+    if holdout_acc is None or holdout_acc < MIN_HOLDOUT_ACCURACY:
+        print(f"⛔ [FILTER VETO] Holdout accuracy ({holdout_acc}) te laag (Min: {MIN_HOLDOUT_ACCURACY}).")
         return
 
     score, max_score = 0, 4
@@ -470,7 +475,16 @@ def evaluate_and_trade(asset, symbol):
     except Exception:
         pass
 
-    if not (prob >= MIN_DIRECTION_PROBABILITY and pred_move_pct >= MIN_PREDICTED_RETURN_PCT and score >= MIN_SCORE):
+    if prob < MIN_DIRECTION_PROBABILITY:
+        print(f"⛔ [FILTER VETO] Richting kans ({prob}%) is lager dan vereist ({MIN_DIRECTION_PROBABILITY}%).")
+        return
+        
+    if pred_move_pct < MIN_PREDICTED_RETURN_PCT:
+        print(f"⛔ [FILTER VETO] Voorspelde winst ({pred_move_pct}%) is lager dan vereist ({MIN_PREDICTED_RETURN_PCT}%).")
+        return
+        
+    if score < MIN_SCORE:
+        print(f"⛔ [FILTER VETO] Multi-factor score ({score}) is te laag (Vereist min: {MIN_SCORE}).")
         return
 
     # ========== UITVOERING MET BOSS LEVERAGE & RETRY WRAPPER ==========
@@ -478,13 +492,14 @@ def evaluate_and_trade(asset, symbol):
         return
     amount = compute_contract_amount(symbol, price, boss_leverage)
     if amount is None:
+        print(f"⛔ [UITVOERING FOUT] Kon contracthoeveelheid niet berekenen voor {symbol}.")
         return
 
     side = 'buy' if is_long else 'sell'
     direction_str = "LONG 📈" if is_long else "SHORT 📉"
     print(f"🔥 {direction_str} {symbol}: {amount} contracten | Lev: {boss_leverage}x | SL ${stop_loss_val:.4f} | TP ${take_profit_val:.4f}")
     if DRY_RUN:
-        print("[DRY_RUN] Geen order geplaatst.")
+        print("[DRY_RUN] Geen order geplaatst vanwege actieve DRY_RUN modus.")
         return
 
     params = {
@@ -517,11 +532,11 @@ def evaluate_and_trade(asset, symbol):
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print(f"Futures Live Trader Worker (RoBUUST & Adaptief Verbonden) gestart ({EXCHANGE_ID}, ${TRADE_AMOUNT_USDT} margin, {DESIRED_MARGIN_MODE}"
+    print(f"Futures Live Trader Worker (Met Debug Filters) gestart ({EXCHANGE_ID}, ${TRADE_AMOUNT_USDT} margin, {DESIRED_MARGIN_MODE}"
           f"{', DRY_RUN' if DRY_RUN else ''}).")
     last_trade_check_time = 0
 
-    while True:
+    while trade_loop := True: # type: ignore
         try:
             manage_open_positions_and_trailing_stops()
         except Exception as e:
