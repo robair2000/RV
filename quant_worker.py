@@ -127,8 +127,10 @@ MIN_FEATURE_ROWS = 60
 SL_ATR_MULT = 2.5
 TP_ATR_MULT = 5.0
 
-exchange = ccxt.kucoin({'enableRateLimit': True})
-
+exchange = ccxt.kucoin({
+    'enableRateLimit': True,
+    'options': {'defaultType': 'swap'}
+})
 
 def safe_div(num, den):
     if den is None or pd.isna(den) or abs(float(den)) < 1e-12:
