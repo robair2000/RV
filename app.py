@@ -132,7 +132,7 @@ with tab1:
                 })
             
             df_pos = pd.DataFrame(pos_data)
-            st.dataframe(df_pos, use_container_width=True)
+            st.dataframe(df_pos, use_container_width="stretch")
         else:
             st.info("ℹ️ Geen actieve openstaande posities gevonden op je KuCoin Futures account op dit moment.")
     except Exception as e:
@@ -281,7 +281,7 @@ with tab2:
         if os.path.exists(ranking_file):
             try:
                 df_ranking = pd.read_csv(ranking_file)
-                st.dataframe(df_ranking, use_container_width=True)
+                st.dataframe(df_ranking, use_container_width="stretch")
             except Exception as e:
                 st.error(f"Fout bij inlezen ranking CSV: {e}")
         else:
