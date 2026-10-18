@@ -10,6 +10,7 @@ import gc
 import json
 import logging
 import math
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -25,7 +26,15 @@ from sklearn.ensemble import RandomForestRegressor
 warnings.filterwarnings('ignore')
 logging.getLogger('xgboost').setLevel(logging.CRITICAL)
 
-# --- DYNAMISCHE ASSET SELECTIE (Kern + Scanner Top 5) ---
+# --- STAP 1: AUTOMATISCH UITVOEREN VAN GETCOINS.PY ---
+try:
+    print("🔄 Start automatische marktscan via getcoins.py...")
+    subprocess.run(["python", "getcoins.py"], check=True)
+    print("✅ Marktscan succesvol voltooid. CSV is bijgewerkt.")
+except Exception as e:
+    print(f"⚠️ Kon getcoins.py niet uitvoeren: {e}. We gebruiken de bestaande CSV indien aanwezig.")
+
+# --- STAP 2: DYNAMISCHE ASSET SELECTIE (Kern + Scanner Top 5) ---
 def get_combined_trading_symbols(top_n=5):
     """
     Combineert altijd de vaste kern (BTC, ETH, LINK) met de 
@@ -38,7 +47,6 @@ def get_combined_trading_symbols(top_n=5):
     if os.path.exists(ranking_file):
         try:
             df = pd.read_csv(ranking_file)
-            # Pak de top N symbolen en haal de asset naam eruit (bijv. 'SOL/USDT:USDT' -> 'SOL')
             symbols = df['Symbol'].head(top_n).tolist()
             for s in symbols:
                 asset_name = s.split('/')[0].split(':')[0]
@@ -48,7 +56,6 @@ def get_combined_trading_symbols(top_n=5):
         except Exception as e:
             print(f"⚠️ Fout bij lezen van ranking CSV: {e}")
             
-    # Combineer en verwijder dubbele waarden
     combined = list(dict.fromkeys(core_assets + dynamic_assets))
     print(f"🎯 Definitieve actieve trading scope ({len(combined)} assets): {combined}")
     return combined
