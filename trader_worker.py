@@ -64,7 +64,6 @@ GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
 def pull_ranking_from_github():
-    """Haalt de meest recente ranking CSV op van GitHub zodat alle workers synchroon lopen."""
     filename = 'kucoin_best_coins_ranking.csv'
     token = os.environ.get('GITHUB_TOKEN', '')
     url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
@@ -77,16 +76,11 @@ def pull_ranking_from_github():
             with open(filename + '.tmp', 'wb') as f:
                 f.write(resp.read())
         os.replace(filename + '.tmp', filename)
-        print("📥 Verse ranking CSV succesvol opgehaald van GitHub voor trader.")
-    except Exception as e:
-        print(f"⚠️ Kon ranking CSV niet ophalen van GitHub voor trader ({e}), we gebruiken lokale versie.")
+    except Exception:
+        pass
 
 
-# --- CONFIGURATIE FUTURES SWING TRADING (V20 ZONE-BASED LIMITS) ---
 def get_combined_trading_assets(top_n=5):
-    """
-    Combineert altijd de vaste kern met de geldige top N futures uit de ranking CSV.
-    """
     core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_symbols = []
@@ -99,27 +93,17 @@ def get_combined_trading_assets(top_n=5):
                 for s in symbols:
                     if s not in dynamic_symbols and ':USDT' in s:
                         dynamic_symbols.append(s)
-            print(f"📈 Dynamische top {top_n} ingeladen voor trader: {dynamic_symbols}")
-        except Exception as e:
-            print(f"⚠️ Fout bij lezen van ranking CSV in trader: {e}")
+        except Exception:
+            pass
             
-    combined = list(dict.fromkeys(core_symbols + dynamic_symbols))
-    print(f"🎯 Actieve trader trading scope ({len(combined)} symbols): {combined}")
-    return combined
+    return list(dict.fromkeys(core_symbols + dynamic_symbols))
 
 
 TIMEFRAMES = ['4h', '1d']
-TRADE_CHECK_INTERVAL_SECONDS = 3600
-POSITION_CHECK_INTERVAL_SECONDS = 120
-
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 7.7))
 
 ASSET_MARGIN_WEIGHTS = {
-    'BTC': 1.5,
-    'LINK': 1.5,
-    'ETH': 1.0,
-    'SOL': 1.0,
-    'AVAX': 1.0
+    'BTC': 1.5, 'LINK': 1.5, 'ETH': 1.0, 'SOL': 1.0, 'AVAX': 1.0
 }
 
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
@@ -158,6 +142,7 @@ def execute_with_retry(func, retries=3, delay=2):
 
 
 def push_trader_status_to_github():
+    """Pusht ALLEEN naar GitHub bij werkelijke wijzigingen, nooit meer blind elke minuut."""
     data = {
         'updated_at': time.time(),
         'active_trades': active_trades,
@@ -262,6 +247,14 @@ def close_position(symbol, side, contracts):
     if DRY_RUN:
         return True
     try:
+        # Annuleer openstaande SL/TP orders op de exchange
+        try:
+            open_orders = exchange.fetch_open_orders(symbol)
+            for o in open_orders:
+                exchange.cancel_order(o['id'], symbol)
+        except Exception:
+            pass
+
         execute_with_retry(lambda: exchange.create_order(
             symbol, 'market', close_side, contracts, None,
             {'reduceOnly': True, 'marginMode': DESIRED_MARGIN_MODE}
@@ -271,11 +264,23 @@ def close_position(symbol, side, contracts):
         return False
 
 
-def pnl_fraction(side, entry, price):
-    if not entry:
-        return 0.0
-    move = (price - entry) / entry
-    return move if side == 'long' else -move
+def update_exchange_stop_loss(symbol, side, new_sl):
+    """Werkt de stop-loss op de exchange actief bij wanneer de trailing stop beweegt."""
+    if DRY_RUN:
+        return
+    try:
+        open_orders = exchange.fetch_open_orders(symbol)
+        for o in open_orders:
+            if o.get('type') == 'stop' or 'stop' in o.get('info', {}).get('stop', '').lower():
+                exchange.cancel_order(o['id'], symbol)
+
+        close_side = 'sell' if side == 'long' else 'buy'
+        exchange.create_order(symbol, 'stop', close_side, 0, new_sl, {
+            'stopPrice': new_sl,
+            'reduceOnly': True
+        })
+    except Exception as e:
+        print(f"⚠️ Kon exchange stop-loss niet bijwerken voor {symbol}: {e}")
 
 
 def manage_open_positions_and_trailing_stops(symbols):
@@ -327,6 +332,7 @@ def manage_open_positions_and_trailing_stops(symbols):
         sgn = 1 if side == 'long' else -1
         
         distance_in_atr = sgn * (price - entry) / atr if atr > 0 else 0.0
+        old_sl = trade['sl']
 
         if distance_in_atr >= 2.4 and not trade.get('breakeven_secured', False):
             if side == 'long' and trade['sl'] < entry:
@@ -358,15 +364,27 @@ def manage_open_positions_and_trailing_stops(symbols):
                         state_changed = True
             stop_hit = price >= trade['sl']
             tp_hit = price <= trade['tp']
+
+        # Als de SL is opgeschoven, synchroniseer dit direct met de exchange
+        if trade['sl'] != old_sl:
+            update_exchange_stop_loss(symbol, side, trade['sl'])
             
         if stop_hit or tp_hit:
             if close_position(symbol, side, contracts):
-                if pnl_fraction(side, entry, price) < 0:
+                if ((price - entry) / entry if side == 'long' else (entry - price) / entry) < 0:
                     symbol_cooldowns[symbol] = time.time()
                 active_trades.pop(symbol, None)
                 state_changed = True
 
-    if state_changed or len(active_trades) > 0:
+    # Ruim gesloten trades op uit active_trades als ze op de exchange niet meer bestaan
+    to_remove = [sym for sym in active_trades if sym not in open_symbols]
+    if to_remove:
+        for sym in to_remove:
+            active_trades.pop(sym, None)
+        state_changed = True
+
+    # Push naar GitHub ALLEEN bij echte wijzigingen
+    if state_changed:
         push_trader_status_to_github()
 
 
@@ -426,7 +444,6 @@ def execute_live_trades_scan(symbols):
 
 
 def evaluate_and_trade(asset, symbol):
-    # 1. Laad de ML Voorspelling van de Quant Worker (model_state_*.json)
     state_4h = load_state(asset, '4h')
     if state_4h is None:
         return
@@ -441,7 +458,6 @@ def evaluate_and_trade(asset, symbol):
         return
     atr = price * atr_pct / 100.0
 
-    # 2. Laad de S&R Confluence van de Agent (pattern_state_*.json)
     pattern_st = load_pattern_state(asset)
     if pattern_st is None:
         return
@@ -452,7 +468,6 @@ def evaluate_and_trade(asset, symbol):
     boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 2.5))
     min_score_req = pattern_st.get('min_score_required', MIN_BOSS_SCORE)
 
-    # 3. STRIKTE CONFLUENCE GATEKEEPER: Quant en Agent MOETEN in lijn zijn!
     if boss_signal != quant_signal or boss_score < min_score_req:
         return
 
