@@ -1,0 +1,78 @@
+{
+    "learning_rate": 0.05,
+    "lookback_window": 120,
+    "current_regime": "trending",
+    "regime_features": {
+        "trending": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ],
+        "sideways": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ]
+    },
+    "active_features": [
+        "return_1",
+        "dist_sma20",
+        "dist_sma50",
+        "RSI",
+        "atr_ratio",
+        "bb_position",
+        "ADX",
+        "MACD_hist",
+        "OBV_slope",
+        "VWAP_dist",
+        "dist_support",
+        "dist_resistance"
+    ],
+    "last_trained_timestamp": 1792364472.443919,
+    "model_weights": {
+        "xgb": 0.32491408773455255,
+        "cat": 0.34179674946902844,
+        "rf": 0.33328916279641896
+    },
+    "model_errors": {
+        "xgb": null,
+        "cat": null,
+        "rf": null
+    },
+    "baseline_error": 1.0416545059263715,
+    "last_prediction": 0.03818570547706471,
+    "last_prediction_price": 0.03818570547706471,
+    "predicted_return_pct": -0.1550386271023577,
+    "direction_probability": 32.03187561035156,
+    "signal": "short",
+    "signal_probability": 67.96812438964844,
+    "holdout_direction_accuracy": 0.43333333333333335,
+    "holdout_classifier_accuracy": null,
+    "holdout_samples": 0,
+    "atr": 0.0011570000000000007,
+    "atr_pct": 3.0252320564779724,
+    "last_close": 0.038245,
+    "last_candle_ts": 0,
+    "data_status": "ok",
+    "stop_loss": 0.0411375,
+    "take_profit": 0.032459999999999996,
+    "updated_at": 1792364472
+}
