@@ -395,8 +395,8 @@ def ensure_margin_and_leverage(symbol, target_leverage):
 
 def compute_contract_amount(asset, symbol, price, leverage):
     """
-    Berekent het aantal contracten nauwkeurig op basis van exchange contract size 
-    en voorkomt ongewenste te grote notional exposure door minimale contractgrootte.
+    Berekent het aantal contracten streng. Weigert de trade direct als de 
+    minimale contractwaarde van de exchange groter is dan de gewenste doel-notional.
     """
     weight = ASSET_MARGIN_WEIGHTS.get(asset, 1.0)
     target_margin = TRADE_AMOUNT_USDT * weight
@@ -414,19 +414,18 @@ def compute_contract_amount(asset, symbol, price, leverage):
     if per_contract_notional <= 0:
         return None
         
+    # STRIKTE VEILIGHEIDSCHECK: Als 1 minimum contract groter is dan de doel-notional, sla over!
+    if per_contract_notional > target_notional:
+        print(f"⚠️ Minimale contractwaarde voor {symbol} ({per_contract_notional:.2f} USDT) is groter dan doel-notional ({target_notional:.2f} USDT). Sla over.")
+        return None
+
     raw_amount = target_notional / per_contract_notional
     amount = max(min_amount, round(raw_amount, 4))
-    
-    # Veiligheidscheck: als 1 contract al groter is dan 2.5x de gewenste notional, weiger de trade
-    if per_contract_notional > (target_notional * 2.5) and raw_amount < 1.0:
-        print(f"⚠️ Contractgrootte voor {symbol} te groot ({per_contract_notional} USDT) voor gewenste notional ({target_notional} USDT). Sla over.")
-        return None
 
     return float(amount)
 
 
 def execute_live_trades_scan(symbols):
-    # PUNT 2 OPGELOST: Ruim verlopen cooldowns automatisch op
     current_time = time.time()
     expired_cooldowns = [sym for sym, ts in symbol_cooldowns.items() if current_time - ts > COOLDOWN_SECONDS]
     for sym in expired_cooldowns:
@@ -445,7 +444,6 @@ def execute_live_trades_scan(symbols):
         if abs(float(p.get('contracts') or 0)) > 0:
             active_symbols.add(p.get('symbol'))
 
-    # PUNT 1 OPGELOST: Voorkom dubbele openstaande orders voor hetzelfde symbool
     pending_order_symbols = set()
     for o in open_orders:
         if o.get('status') == 'open':
@@ -458,7 +456,7 @@ def execute_live_trades_scan(symbols):
         if symbol not in exchange.markets or symbol in active_symbols or symbol in symbol_cooldowns:
             continue
         if symbol in pending_order_symbols:
-            continue # Er staat al een limiet-order open, niet spammen!
+            continue
         if current_time - symbol_cooldowns.get(symbol, 0) < COOLDOWN_SECONDS:
             continue
         try:
@@ -498,12 +496,11 @@ def evaluate_and_trade(asset, symbol):
 
     is_long = (quant_signal == 'long')
 
-    # PUNT 4 OPGELOST: Corrigeer de directionele meta-classifier / stijgingskans voor shorts
     direction_prob = float(state_4h.get('direction_probability', 50.0))
     if is_long and direction_prob < 50.0:
-        return  # Long vereist kans op stijging >= 50%
+        return
     if not is_long and direction_prob > 50.0:
-        return  # Short vereist kans op stijging <= 50% (dus kans op daling)
+        return
 
     if is_long:
         limit_price = price - (0.2 * atr)
