@@ -1,6 +1,78 @@
 {
-  "data_status": "ok",
-  "signal": "none",
-  "atr_pct": 0.93,
-  "updated_at": 1792350957.9083195
+    "learning_rate": 0.05,
+    "lookback_window": 120,
+    "current_regime": "sideways",
+    "regime_features": {
+        "trending": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ],
+        "sideways": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ]
+    },
+    "active_features": [
+        "return_1",
+        "dist_sma20",
+        "dist_sma50",
+        "RSI",
+        "atr_ratio",
+        "bb_position",
+        "ADX",
+        "MACD_hist",
+        "OBV_slope",
+        "VWAP_dist",
+        "dist_support",
+        "dist_resistance"
+    ],
+    "last_trained_timestamp": 1792355456.7226646,
+    "model_weights": {
+        "xgb": 0.32656597148929273,
+        "cat": 0.32597802693550487,
+        "rf": 0.34745600157520246
+    },
+    "model_errors": {
+        "xgb": null,
+        "cat": null,
+        "rf": null
+    },
+    "baseline_error": 0.9490743162226164,
+    "last_prediction": 78153.75382194771,
+    "last_prediction_price": 78153.75382194771,
+    "predicted_return_pct": 0.0005806817469028312,
+    "direction_probability": 60.91176223754883,
+    "signal": "none",
+    "signal_probability": 50.0,
+    "holdout_direction_accuracy": 0.7,
+    "holdout_classifier_accuracy": null,
+    "holdout_samples": 0,
+    "atr": 889.4857142857145,
+    "atr_pct": 1.1381294382779927,
+    "last_close": 78153.3,
+    "last_candle_ts": 0,
+    "data_status": "ok",
+    "stop_loss": 0.0,
+    "take_profit": 0.0,
+    "updated_at": 1792355456
 }
