@@ -85,27 +85,26 @@ def pull_ranking_from_github():
 # --- CONFIGURATIE FUTURES SWING TRADING (V20 ZONE-BASED LIMITS) ---
 def get_combined_trading_assets(top_n=5):
     """
-    Combineert altijd de vaste kern (BTC, ETH, LINK) met de 
-    dynamische Top N uit de V20 ranking scanner (kucoin_best_coins_ranking.csv).
+    Combineert altijd de vaste kern met de geldige top N futures uit de ranking CSV.
     """
-    core_assets = ['BTC', 'ETH', 'LINK']
+    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
-    dynamic_assets = []
+    dynamic_symbols = []
     
     if os.path.exists(ranking_file):
         try:
             df = pd.read_csv(ranking_file)
-            symbols = df['Symbol'].head(top_n).tolist()
-            for s in symbols:
-                asset_name = s.split('/')[0].split(':')[0]
-                if asset_name not in dynamic_assets:
-                    dynamic_assets.append(asset_name)
-            print(f"📈 Dynamische top {top_n} ingeladen voor trader: {dynamic_assets}")
+            if 'Symbol' in df.columns:
+                symbols = df['Symbol'].head(top_n).tolist()
+                for s in symbols:
+                    if s not in dynamic_symbols and ':USDT' in s:
+                        dynamic_symbols.append(s)
+            print(f"📈 Dynamische top {top_n} ingeladen voor trader: {dynamic_symbols}")
         except Exception as e:
             print(f"⚠️ Fout bij lezen van ranking CSV in trader: {e}")
             
-    combined = list(dict.fromkeys(core_assets + dynamic_assets))
-    print(f"🎯 Actieve trader trading scope ({len(combined)} assets): {combined}")
+    combined = list(dict.fromkeys(core_symbols + dynamic_symbols))
+    print(f"🎯 Actieve trader trading scope ({len(combined)} symbols): {combined}")
     return combined
 
 
@@ -113,7 +112,7 @@ TIMEFRAMES = ['4h', '1d']
 TRADE_CHECK_INTERVAL_SECONDS = 3600
 POSITION_CHECK_INTERVAL_SECONDS = 120
 
-TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
+TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 7.7))
 
 ASSET_MARGIN_WEIGHTS = {
     'BTC': 1.5,
@@ -207,10 +206,11 @@ def push_trader_status_to_github():
         pass
 
 
-def pull_latest_states_from_github(assets):
+def pull_latest_states_from_github(symbols):
     token = os.environ.get('GITHUB_TOKEN', '')
     files_to_pull = []
-    for asset in assets:
+    for symbol in symbols:
+        asset = symbol.split('/')[0].split(':')[0]
         for tf in TIMEFRAMES:
             files_to_pull.append(f'model_state_{asset.lower()}_{tf}.json')
             files_to_pull.append(f'pattern_state_{asset.lower()}_4h.json')
@@ -278,7 +278,7 @@ def pnl_fraction(side, entry, price):
     return move if side == 'long' else -move
 
 
-def manage_open_positions_and_trailing_stops(assets):
+def manage_open_positions_and_trailing_stops(symbols):
     try:
         positions = execute_with_retry(lambda: exchange.fetch_positions())
     except Exception:
@@ -305,7 +305,7 @@ def manage_open_positions_and_trailing_stops(assets):
 
         trade = active_trades.get(symbol)
         if trade is None:
-            base = symbol.split('/')[0]
+            base = symbol.split('/')[0].split(':')[0]
             st = load_state(base, '4h')
             pst = load_pattern_state(base)
             trail_mult = float(pst.get('recommended_trailing_mult', 2.5)) if pst else 2.5
@@ -397,16 +397,8 @@ def compute_contract_amount(asset, symbol, price, leverage):
     return float(max(1, amount))
 
 
-def resolve_symbol(asset):
-    primary = f"{asset}/USDT:USDT"
-    if primary in exchange.markets:
-        return primary
-    fallback = f"{asset}/USDT"
-    return fallback if fallback in exchange.markets else None
-
-
-def execute_live_trades_scan(assets):
-    pull_latest_states_from_github(assets)
+def execute_live_trades_scan(symbols):
+    pull_latest_states_from_github(symbols)
     try:
         exchange.load_markets()
         positions = execute_with_retry(lambda: exchange.fetch_positions())
@@ -421,13 +413,13 @@ def execute_live_trades_scan(assets):
     if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
         return
 
-    for asset in assets:
-        symbol = resolve_symbol(asset)
-        if not symbol or symbol in active_symbols or symbol in symbol_cooldowns:
+    for symbol in symbols:
+        if symbol not in exchange.markets or symbol in active_symbols or symbol in symbol_cooldowns:
             continue
         if time.time() - symbol_cooldowns.get(symbol, 0) < COOLDOWN_SECONDS:
             continue
         try:
+            asset = symbol.split('/')[0].split(':')[0]
             evaluate_and_trade(asset, symbol)
         except Exception:
             pass
@@ -505,12 +497,11 @@ if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
     while True:
         try:
-            # Haal vóór elke cyclus de verse ranking op van GitHub
             pull_ranking_from_github()
-            current_assets = get_combined_trading_assets(top_n=5)
+            current_symbols = get_combined_trading_assets(top_n=5)
 
-            manage_open_positions_and_trailing_stops(current_assets)
-            execute_live_trades_scan(current_assets)
+            manage_open_positions_and_trailing_stops(current_symbols)
+            execute_live_trades_scan(current_symbols)
         except Exception as e:
             print(f"Fout in trader lus: {e}")
         time.sleep(60)
