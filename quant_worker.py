@@ -1,6 +1,6 @@
 import os
 
-# --- OUTPUT & WARNING SUPPRESSION (DIRECT BIJ DE START) ---
+# --- OUTPUT & WARNING SUPPRESSION ---
 os.environ["PYTHONWARNINGS"] = "ignore"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
@@ -25,22 +25,21 @@ from sklearn.ensemble import RandomForestRegressor
 warnings.filterwarnings('ignore')
 logging.getLogger('xgboost').setLevel(logging.CRITICAL)
 
-# 1. UITGEBREID MET SOL EN AVAX
 assets = ['BTC', 'ETH', 'LINK', 'SOL', 'AVAX']
 
-# Aangepast naar 4h en 1d voor multi-day swing trends
 timeframes = {
     '4h': {'interval': '4h', 'limit': 500, 'min_interval_seconds': 3 * 3600},
     '1d': {'interval': '1d', 'limit': 365, 'min_interval_seconds': 23 * 3600},
 }
 
 base_features = [
-    'return_1', 'dist_sma20', 'dist_sma50', 'dist_ema9', 'dist_ema21',
-    'RSI', 'atr_ratio', 'bb_position', 'OBV_slope', 'VWAP_dist', 'Supertrend_dist'
+    'return_1', 'dist_sma20', 'dist_sma50', 'RSI', 'atr_ratio', 
+    'bb_position', 'ADX', 'MACD_hist', 'OBV_slope', 'VWAP_dist',
+    'dist_support', 'dist_resistance'
 ]
 
 optional_features = [
-    'MACD_hist', 'ADX', 'CMF', 'ATR_percentile', 'regime_score', 'smc_zone_dist',
+    'CMF', 'ATR_percentile', 'regime_score', 'smc_zone_dist',
     'lorentzian_dist', 'funding_rate', 'oi_change', 'oi_ratio',
     'bid_ask_imbalance', 'book_pressure', 'taker_buy_ratio', 'btc_trend_gap'
 ]
@@ -52,9 +51,8 @@ MIN_HOLDOUT = 15
 MIN_TRAIN_ROWS = 25
 MIN_FEATURE_ROWS = 60
 
-# 2. AFGESTSTEMD OP DE SWING STRATEGIE (SL/TP)
 SL_ATR_MULT = 2.5
-TP_ATR_MULT = 4.0
+TP_ATR_MULT = 5.0
 
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
@@ -106,7 +104,7 @@ def default_state():
     return {
         'learning_rate': 0.05,
         'lookback_window': 120,
-        'current_regime': 'sideways',
+        'current_regime': 'trending',
         'regime_features': {
             'trending': base_features.copy(),
             'sideways': base_features.copy(),
@@ -187,17 +185,15 @@ def fetch_data_safely(symbol, tf_info):
 def compute_features(df):
     df = df.copy()
     close = df['close']
+    high = df['high']
+    low = df['low']
 
     df['SMA_20'] = close.rolling(window=20).mean()
     df['SMA_50'] = close.rolling(window=50).mean()
-    df['EMA_9'] = close.ewm(span=9, adjust=False).mean()
-    df['EMA_21'] = close.ewm(span=21, adjust=False).mean()
 
     df['return_1'] = close.pct_change()
-    df['dist_sma20'] = (close - df['SMA_20']) / df['SMA_20']
-    df['dist_sma50'] = (close - df['SMA_50']) / df['SMA_50']
-    df['dist_ema9'] = (close - df['EMA_9']) / df['EMA_9']
-    df['dist_ema21'] = (close - df['EMA_21']) / df['EMA_21']
+    df['dist_sma20'] = (close - df['SMA_20']) / (df['SMA_20'] + 1e-8)
+    df['dist_sma50'] = (close - df['SMA_50']) / (df['SMA_50'] + 1e-8)
 
     delta = close.diff()
     gain = delta.where(delta > 0, 0.0)
@@ -205,51 +201,27 @@ def compute_features(df):
     rs = gain.rolling(window=14).mean() / (loss.rolling(window=14).mean() + 1e-8)
     df['RSI'] = 100 - (100 / (1 + rs))
 
-    high_low = df['high'] - df['low']
-    high_close = np.abs(df['high'] - close.shift())
-    low_close = np.abs(df['low'] - close.shift())
+    high_low = high - low
+    high_close = np.abs(high - close.shift())
+    low_close = np.abs(low - close.shift())
     true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['ATR'] = true_range.rolling(window=14).mean()
-    df['atr_ratio'] = df['ATR'] / close
+    df['atr_ratio'] = df['ATR'] / (close + 1e-8)
 
     bb_std = close.rolling(window=20).std()
-    bb_upper = df['SMA_20'] + (bb_std * 2)
-    bb_lower = df['SMA_20'] - (bb_std * 2)
-    df['bb_position'] = (close - bb_lower) / (bb_upper - bb_lower + 1e-8)
+    bb_upper = df['SMA_20'] + (bb_std * 2.0)
+    bb_lower = df['SMA_20'] - (bb_std * 2.0)
+    df['bb_position'] = (close - bb_lower) / ((bb_upper - bb_lower) + 1e-8)
 
-    df['OBV'] = (np.sign(close.diff()) * df['volume']).fillna(0).cumsum()
-    df['OBV_slope'] = df['OBV'].diff() / (df['volume'].rolling(20).mean() + 1e-8)
-
-    typical_price = (df['high'] + df['low'] + close) / 3
-    vwap = (typical_price * df['volume']).rolling(20).sum() / (df['volume'].rolling(20).sum() + 1e-8)
-    df['VWAP_dist'] = (close - vwap) / (vwap + 1e-8)
-
-    hl2 = (df['high'] + df['low']) / 2
-    basic_upper = (hl2 + 3.0 * df['ATR']).to_numpy(copy=True)
-    basic_lower = (hl2 - 3.0 * df['ATR']).to_numpy(copy=True)
-    close_val = close.to_numpy(copy=True)
-    f_upper = basic_upper.copy()
-    f_lower = basic_lower.copy()
-    trend = np.ones(len(df), dtype=int)
-    for i in range(1, len(df)):
-        if np.isnan(basic_upper[i]) or np.isnan(f_upper[i - 1]):
-            continue
-        if basic_upper[i] < f_upper[i - 1] or close_val[i - 1] > f_upper[i - 1]:
-            f_upper[i] = basic_upper[i]
-        else:
-            f_upper[i] = f_upper[i - 1]
-        if basic_lower[i] > f_lower[i - 1] or close_val[i - 1] < f_lower[i - 1]:
-            f_lower[i] = basic_lower[i]
-        else:
-            f_lower[i] = f_lower[i - 1]
-        if close_val[i] > f_upper[i - 1]:
-            trend[i] = 1
-        elif close_val[i] < f_lower[i - 1]:
-            trend[i] = -1
-        else:
-            trend[i] = trend[i - 1]
-    supertrend = np.where(trend == 1, f_lower, f_upper)
-    df['Supertrend_dist'] = (close - supertrend) / (close + 1e-8)
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    tr14 = true_range.rolling(window=14).sum()
+    plus_di = 100 * pd.Series(plus_dm).rolling(window=14).sum() / (tr14 + 1e-8)
+    minus_di = 100 * pd.Series(minus_dm).rolling(window=14).sum() / (tr14 + 1e-8)
+    dx = 100 * (plus_di - minus_di).abs() / ((plus_di + minus_di) + 1e-8)
+    df['ADX'] = dx.rolling(window=14).mean()
 
     ema_12 = close.ewm(span=12, adjust=False).mean()
     ema_26 = close.ewm(span=26, adjust=False).mean()
@@ -257,36 +229,25 @@ def compute_features(df):
     macd_signal = macd_line.ewm(span=9, adjust=False).mean()
     df['MACD_hist'] = macd_line - macd_signal
 
-    up_move = df['high'].diff()
-    down_move = -df['low'].diff()
-    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
-    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index)
-    tr14 = true_range.rolling(window=14).sum()
-    plus_di = 100 * (plus_dm.rolling(window=14).sum() / (tr14 + 1e-8))
-    minus_di = 100 * (minus_dm.rolling(window=14).sum() / (tr14 + 1e-8))
-    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-8)
-    df['ADX'] = dx.rolling(window=14).mean()
+    df['OBV'] = (np.sign(close.diff()) * df['volume']).fillna(0).cumsum()
+    df['OBV_slope'] = df['OBV'].diff() / (df['volume'].rolling(20).mean() + 1e-8)
 
-    mf_multiplier = ((close - df['low']) - (df['high'] - close)) / ((df['high'] - df['low']) + 1e-8)
-    df['CMF'] = (mf_multiplier * df['volume']).rolling(window=20).sum() / (df['volume'].rolling(20).sum() + 1e-8)
+    typical_price = (high + low + close) / 3
+    vwap = (typical_price * df['volume']).rolling(20).sum() / (df['volume'].rolling(20).sum() + 1e-8)
+    df['VWAP_dist'] = (close - vwap) / (vwap + 1e-8)
+
+    rolling_min = low.rolling(window=50, min_periods=10).min()
+    rolling_max = high.rolling(window=50, min_periods=10).max()
+    df['dist_support'] = (close - rolling_min) / (df['ATR'] + 1e-8)
+    df['dist_resistance'] = (rolling_max - close) / (df['ATR'] + 1e-8)
 
     df['ATR_percentile'] = df['ATR'].rolling(window=100).apply(lambda x: (x <= x[-1]).mean(), raw=True)
     df['regime_score'] = (df['ADX'] / 100.0) * (1.0 - df['atr_ratio'] / (df['atr_ratio'].rolling(20).mean() + 1e-8))
 
-    body_size = (close - df['open']).abs()
-    is_order_block = body_size > (2.0 * body_size.rolling(20).mean())
-    recent_ob_price = pd.Series(np.where(is_order_block, (df['high'] + df['low']) / 2, np.nan), index=df.index).ffill()
-    df['smc_zone_dist'] = ((close - recent_ob_price) / (close + 1e-8)).fillna(0)
-
-    rolling_max = df['high'].rolling(10).max()
-    rolling_min = df['low'].rolling(10).min()
-    mid_range = (rolling_max + rolling_min) / 2
-    df['lorentzian_dist'] = (close - mid_range) / (rolling_max - rolling_min + 1e-8)
-
     return df.replace([np.inf, -np.inf], np.nan)
 
 
-def enrich_market_context(df, funding=None, oi=None, orderbook=None, btc_ref=None):
+def enrich_market_context(df, funding=None, oi=None, orderbook=None):
     out = df.copy()
     out['funding_rate'] = pd.Series(funding, index=out.index) if funding is not None else 0.0
     out['oi_change'] = 0.0
@@ -301,10 +262,10 @@ def enrich_market_context(df, funding=None, oi=None, orderbook=None, btc_ref=Non
 def get_market_regime(df):
     try:
         if 'ADX' in df.columns and not pd.isna(df['ADX'].iloc[-1]):
-            return 'trending' if df['ADX'].iloc[-1] > 25 else 'sideways'
+            return 'trending' if df['ADX'].iloc[-1] > 16 else 'sideways'
     except Exception:
         pass
-    return 'sideways'
+    return 'trending'
 
 
 def make_regressors(lr):
@@ -472,9 +433,12 @@ def process(df_raw, state, now, symbol):
 
     reg_up = ens_ret > 0
     clf_up = prob_up >= 50.0
-    if reg_up and clf_up:
+    
+    adx_val = df['ADX'].iloc[-1] if 'ADX' in df.columns and not pd.isna(df['ADX'].iloc[-1]) else 20.0
+    
+    if adx_val >= 16.0 and reg_up and clf_up:
         signal, sig_prob = 'long', prob_up
-    elif (not reg_up) and (not clf_up):
+    elif adx_val >= 16.0 and (not reg_up) and (not clf_up):
         signal, sig_prob = 'short', 100.0 - prob_up
     else:
         signal, sig_prob = 'none', 50.0
