@@ -54,48 +54,48 @@
         "ATR_percentile",
         "ADX"
     ],
-    "last_trained_timestamp": 1792283444.6850517,
+    "last_trained_timestamp": 1792287044.889411,
     "model_weights": {
-        "xgb": 0.3361300287358253,
-        "cat": 0.34830828945914477,
-        "rf": 0.3155616818050299
+        "xgb": 0.3349790563502678,
+        "cat": 0.3461835782014898,
+        "rf": 0.3188373654482423
     },
     "model_errors": {
-        "xgb": 0.001756346860734843,
-        "cat": 0.0016949378652668149,
-        "rf": 0.001870825817508418
+        "xgb": 0.001713360865218994,
+        "cat": 0.0016579064714616933,
+        "rf": 0.0018001027613352204
     },
-    "baseline_error": 1.0272390711484098,
-    "last_prediction": 81479.54579382054,
-    "last_prediction_price": 81479.54579382054,
-    "predicted_return_pct": -0.0014165393516021463,
-    "direction_probability": 51.98689270019531,
-    "signal": "none",
-    "signal_probability": 50.0,
-    "holdout_direction_accuracy": 0.5576923076923077,
+    "baseline_error": 1.0324408113913561,
+    "last_prediction": 81549.63708946819,
+    "last_prediction_price": 81549.63708946819,
+    "predicted_return_pct": 0.002375406624821353,
+    "direction_probability": 53.743892669677734,
+    "signal": "long",
+    "signal_probability": 53.743892669677734,
+    "holdout_direction_accuracy": 0.5384615384615384,
     "holdout_classifier_accuracy": 0.5384615384615384,
     "holdout_samples": 52,
-    "atr": 214.5142857142855,
-    "atr_pct": 0.2632700574667197,
-    "last_close": 81480.7,
-    "last_candle_ts": 1792278000,
+    "atr": 220.49285714285674,
+    "atr_pct": 0.27038513304833456,
+    "last_close": 81547.7,
+    "last_candle_ts": 1792281600,
     "data_status": "ok",
-    "stop_loss": 0.0,
-    "take_profit": 0.0,
-    "updated_at": 1792283444,
+    "stop_loss": 81216.96071428571,
+    "take_profit": 82098.93214285714,
+    "updated_at": 1792287044,
     "model_errors_pct": {
-        "xgb": 0.1756346860734843,
-        "cat": 0.16949378652668148,
-        "rf": 0.1870825817508418
+        "xgb": 0.1713360865218994,
+        "cat": 0.1657906471461693,
+        "rf": 0.18001027613352205
     },
     "model_errors_usd": {
-        "xgb": 143.10837165547753,
-        "cat": 138.10472371844577,
-        "rf": 152.43619718865816
+        "xgb": 139.72063782861895,
+        "cat": 135.1984595628167,
+        "rf": 146.79423995053614
     },
     "model_errors_readable": {
-        "xgb": "143.11 USD (0.18%)",
-        "cat": "138.10 USD (0.17%)",
-        "rf": "152.44 USD (0.19%)"
+        "xgb": "139.72 USD (0.17%)",
+        "cat": "135.20 USD (0.17%)",
+        "rf": "146.79 USD (0.18%)"
     }
 }
