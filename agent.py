@@ -62,7 +62,10 @@ def pull_ranking_from_github():
         print(f"⚠️ Kon ranking CSV niet ophalen van GitHub ({e}), we gebruiken lokale versie indien aanwezig.")
 
 
-# --- CONFIGURATIE V20 S&R & SUPPLY/DEMAND AGENT ---
+# --- CONFIGURATIE V20 S&R & SUPPLY/DEMAND AGENT (Instelbaar via Render Env Vars) ---
+MIN_ADX_TREND = float(os.environ.get('MIN_ADX_TREND', 18.0))
+MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 84.0))
+
 def get_combined_trading_assets(top_n=5):
     """
     Combineert altijd de vaste kern met de geldige top N futures uit de ranking CSV.
@@ -251,7 +254,7 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
             'pattern_signal': 'none', 
             'recommended_leverage': 1, 
             'recommended_trailing_mult': 2.5, 
-            'min_score_required': 84.0,
+            'min_score_required': MIN_BOSS_SCORE,
             'strictness_mode': 'v20_sr_sd_confluence',
             'confidence': 0.0
         }
@@ -263,7 +266,7 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
     signal = 'none'
     score = 50.0
 
-    has_trend = ind_4h['adx'] > 18.0 and ind_1d['adx'] > 14.0
+    has_trend = ind_4h['adx'] >= MIN_ADX_TREND and ind_1d['adx'] > 14.0
 
     close_to_support = (ind_4h['close'] - sr_sd['nearest_support']) <= (2.0 * ind_4h['atr'])
     close_to_resistance = (sr_sd['nearest_resistance'] - ind_4h['close']) <= (2.0 * ind_4h['atr'])
@@ -294,7 +297,6 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
     if signal != 'none':
         meta_prob = train_meta_classifier(df_4h)
         
-        # CORRECTIE VOOR SHORTS: Gebruik 1 - meta_prob zodat een hoge kans op daling wordt beloond
         effective_prob = meta_prob if signal == 'long' else (1.0 - meta_prob)
         
         score += (effective_prob * 15.0)
@@ -302,7 +304,6 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
         threshold_map = {'BTC': 0.46, 'ETH': 0.46, 'LINK': 0.40, 'SOL': 0.40, 'AVAX': 0.40}
         min_prob = threshold_map.get(asset.upper(), 0.40)
 
-        # Evaluatie op basis van de gecorrigeerde effectieve kans
         if effective_prob < min_prob:
             signal = 'none'
             score = 50.0
@@ -315,7 +316,7 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
         'pattern_signal': signal,
         'recommended_leverage': int(leverage),
         'recommended_trailing_mult': float(trailing_mult),
-        'min_score_required': 84.0,
+        'min_score_required': MIN_BOSS_SCORE,
         'strictness_mode': 'v20_sr_sd_confluence',
         'atr_pct': round(ind_4h['atr_pct'], 2),
         'adx_4h': round(ind_4h['adx'], 2),
@@ -394,7 +395,6 @@ def run_final_boss_scan():
         if not df_4h.empty and not df_1d.empty:
             analysis = analyze_advanced_patterns(df_4h, df_1d, asset=asset)
             
-            # De agent schrijft ALLEEN zijn eigen pattern state weg!
             pattern_filename = f'pattern_state_{asset.lower()}_4h.json'
             push_state_to_github(pattern_filename, analysis)
 
