@@ -58,10 +58,8 @@ interval_code = interval_info['code']
 @st.cache_data(ttl=300)
 def load_dashboard_data(symbol, tf_info):
     try:
-        exchange = ccxt.kucoin({
-            'enableRateLimit': True,
-        })
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf_info['interval'], limit=tf_info['limit'])
+        exchange_client = ccxt.kucoin({'enableRateLimit': True})
+        ohlcv = exchange_client.fetch_ohlcv(symbol, timeframe=tf_info['interval'], limit=tf_info['limit'])
         if not ohlcv:
             return None
 
@@ -95,6 +93,9 @@ def get_exchange_client():
     except Exception:
         pass
     return exch
+
+# INITIALISEER DE EXCHANGE CLIENT VOOR POSITIES
+exchange = get_exchange_client()
 
 # --- MAAK TWEE TABS AAN ---
 tab1, tab2 = st.tabs(["🚀 Dashboard & Live Trades", "⚙️ Systeem & Worker Status"])
@@ -132,7 +133,7 @@ with tab1:
                 })
             
             df_pos = pd.DataFrame(pos_data)
-            st.dataframe(df_pos, use_container_width="stretch")
+            st.dataframe(df_pos, width="stretch")
         else:
             st.info("ℹ️ Geen actieve openstaande posities gevonden op je KuCoin Futures account op dit moment.")
     except Exception as e:
@@ -281,7 +282,7 @@ with tab2:
         if os.path.exists(ranking_file):
             try:
                 df_ranking = pd.read_csv(ranking_file)
-                st.dataframe(df_ranking, use_container_width="stretch")
+                st.dataframe(df_ranking, width="stretch")
             except Exception as e:
                 st.error(f"Fout bij inlezen ranking CSV: {e}")
         else:
