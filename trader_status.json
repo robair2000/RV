@@ -1,0 +1,16 @@
+{
+  "updated_at": 1792338088.8464935,
+  "active_trades": {
+    "LINK/USDT:USDT": {
+      "side": "long",
+      "entry": 11.71,
+      "peak": 11.717,
+      "atr": 0.22717400000000001,
+      "sl": 11.142065,
+      "tp": 13.527392,
+      "trailing_mult": 2.5,
+      "breakeven_secured": false
+    }
+  },
+  "cooldowns": {}
+}
