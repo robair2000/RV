@@ -15,11 +15,13 @@ st.set_page_config(
 st.title("⚡ RV Institutional Macro Swing Hub")
 st.markdown("*Real-time ML Model Monitoring, Macro Swing Gatekeeper & Signal Synchronization (4h / 1d)*")
 
-# Sidebar: Asset keuze & Tijdinterval (aangepast naar macro swing tijdsframes)
+# Sidebar: Asset keuze & Tijdinterval (inclusief SOL en AVAX)
 asset_options = {
     'Bitcoin (BTC)': 'BTC',
     'Ethereum (ETH)': 'ETH',
     'Chainlink (LINK)': 'LINK',
+    'Solana (SOL)': 'SOL',
+    'Avalanche (AVAX)': 'AVAX',
 }
 
 interval_options = {
@@ -66,9 +68,10 @@ def load_dashboard_data(symbol, tf_info):
 symbol = f"{asset_code}/USDT"
 df = load_dashboard_data(symbol, interval_info)
 
-# State bestanden (nu gekoppeld aan 4h / 1d i.p.v. 15m)
+# State bestanden
 state_file = f"model_state_{asset_code.lower()}_{interval_code}.json"
 pattern_file = f"pattern_state_{asset_code.lower()}_4h.json"
+trader_status_file = "trader_status.json"
 
 if df is not None and not df.empty:
     current_price = float(df['close'].iloc[-1])
@@ -138,19 +141,48 @@ if df is not None and not df.empty:
                 tp_txt = f"${tp:,.2f}" if (show_levels and tp > 0) else "N.v.t. (Geen signaal)"
 
                 col9, col10, col11, col12 = st.columns(4)
-                col9.metric("Stop-Loss (SL - 2.0x ATR)", sl_txt)
-                col10.metric("Take-Profit (TP - 4.0x ATR)", tp_txt)
+                col9.metric("Model SL (2.0x ATR)", sl_txt)
+                col10.metric("Model TP (4.0x ATR)", tp_txt)
                 col11.metric("Marktregime", regime.capitalize())
                 col12.metric("Skill (<1 = beter dan baseline)", f"{skill:.2f}" if isinstance(skill, (int, float)) else "n.v.t.")
-                
-                if isinstance(skill, (int, float)) and skill >= 1:
-                    st.caption("⚠️ Let op: Skill ≥ 1 betekent dat het model op de out-of-sample testperiode niet beter presteert dan 'geen beweging'.")
+
+                # --- NIEUW: ACTIEVE TRADER WORKER LIVE STATUS ---
+                st.markdown("---")
+                st.markdown("### 🤖 Actieve Trader Worker Live Status (Exchange)")
+
+                if os.path.exists(trader_status_file):
+                    try:
+                        with open(trader_status_file, 'r', encoding='utf-8') as f:
+                            t_status = json.load(f)
+                        
+                        active_t = t_status.get('active_trades', {})
+                        if active_t:
+                            st.warning(f"🚨 **Actieve Posities op Exchange:** {len(active_t)} openstaand")
+                            for sym, t_data in active_t.items():
+                                c_a, c_b, c_c, c_d = st.columns(4)
+                                c_a.metric("Symbool & Richting", f"{sym} ({t_data.get('side').upper()})")
+                                c_b.metric("Instapprijs", f"${t_data.get('entry'):,.2f}")
+                                c_c.metric("Actieve Stop-Loss", f"${t_data.get('sl'):,.2f}")
+                                c_d.metric("Take-Profit", f"${t_data.get('tp'):,.2f}")
+                                
+                                is_be = t_data.get('breakeven_secured', False)
+                                if is_be:
+                                    st.success("🔒 **Breakeven Beveiliging:** Actief (Stop-loss staat op of boven entry!)")
+                                else:
+                                    st.caption("ℹ️ Breakeven Beveiliging activeert zodra de winst ≥ 2.0x ATR is.")
+                        else:
+                            st.info("ℹ️ Geen actieve posities op de exchange momenteel.")
+                    except Exception as e:
+                        st.error(f"Kon trader status niet laden: {e}")
+                else:
+                    st.info("ℹ️ Wacht op de eerste positie-check van de `trader_worker`...")
+
             else:
                 st.warning("Model state gevonden, maar nog geen voorspelling beschikbaar.")
                 
             st.markdown("---")
             
-            # --- UITKLAPMENU: Uitgebreide Model Details & Marktcontext ---
+            # --- UITKLAPMENU ---
             with st.expander("📊 Bekijk Model State, Swing Boss JSON & Ensemble Gewichten"):
                 col_a, col_b = st.columns(2)
                 with col_a:
