@@ -39,10 +39,10 @@ def run_server():
     server.serve_forever()
 
 
-# --- CONFIGURATIE FINAL BOSS AGENT (ULTIMATE SNIPER MODE) ---
+# --- CONFIGURATIE FINAL BOSS AGENT (SWING SNIPER MODE: 4h & 1d) ---
 ASSETS = ['BTC', 'ETH', 'LINK']
-TIMEFRAMES = {'15m': '15m', '1h': '1h'}
-CHECK_INTERVAL_SECONDS = 300  
+TIMEFRAMES = {'4h': '4h', '1d': '1d'}
+CHECK_INTERVAL_SECONDS = 1800  # Elke 30 minuten scannen (voldoende voor macro candles)
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
@@ -70,29 +70,29 @@ def fetch_historical_candles(symbol, timeframe, limit=120):
         return pd.DataFrame()
 
 
-def analyze_advanced_patterns(df_15m, df_1h):
+def analyze_advanced_patterns(df_4h, df_1d):
     """
-    De Final Boss Ultimate Sniper Mode: Maximale kwaliteit, 
-    minimale frequentie en strikte symmetrische filters.
+    Final Boss Swing Mode: Analyseert 4h en 1d candles voor macro-trends 
+    die 2 tot 3 dagen (of langer) aanhouden.
     """
-    if df_15m is None or len(df_15m) < 40 or df_1h is None or len(df_1h) < 40:
+    if df_4h is None or len(df_4h) < 30 or df_1d is None or len(df_1d) < 30:
         return {
             'pattern_score': 50.0, 
             'pattern_signal': 'none', 
             'recommended_leverage': 1, 
-            'recommended_trailing_mult': 1.5,
-            'min_score_required': 88.0,
+            'recommended_trailing_mult': 2.5,  # Ruimere trailing stop voor swing trades
+            'min_score_required': 85.0,
             'strictness_mode': 'strict',
             'confidence': 0.0
         }
 
-    def compute_indicators(df):
+    def compute_macro_indicators(df):
         close = df['close']
         high = df['high']
         low = df['low']
         volume = df['volume']
 
-        # 1. RSI (14)
+        # 1. RSI (14) op macro niveau
         delta = close.diff()
         gain = delta.where(delta > 0, 0.0)
         loss = -delta.where(delta < 0, 0.0)
@@ -100,114 +100,71 @@ def analyze_advanced_patterns(df_15m, df_1h):
         rsi = 100 - (100 / (1 + rs))
         current_rsi = float(rsi.iloc[-1])
 
-        # 2. Bollinger Bands & Squeeze detectie
+        # 2. Moving Average Trend (50 en 200 equivalent op 4h/1d)
         sma20 = close.rolling(window=20).mean()
-        std20 = close.rolling(window=20).std()
-        bb_upper = sma20 + (std20 * 2)
-        bb_lower = sma20 - (std20 * 2)
-        bb_width = (bb_upper - bb_lower) / sma20
-        is_squeeze = bb_width.iloc[-1] < bb_width.rolling(window=50).quantile(0.12).iloc[-1]
+        sma50 = close.rolling(window=50).mean() if len(close) >= 50 else sma20
+        is_uptrend = close.iloc[-1] > sma20.iloc[-1] and sma20.iloc[-1] > sma50.iloc[-1]
+        is_downtrend = close.iloc[-1] < sma20.iloc[-1] and sma20.iloc[-1] < sma50.iloc[-1]
 
-        # 3. Volume Trend (Extra streng: 2.0x)
+        # 3. Macro Volume & Volatiliteit
         vol_sma = volume.rolling(window=20).mean()
-        is_volume_spike = float(volume.iloc[-1]) > float(vol_sma.iloc[-1]) * 2.0
+        is_volume_expansion = float(volume.iloc[-1]) > float(vol_sma.iloc[-1]) * 1.5
 
-        # 4. Institutionele Price Action (SMC Sniper)
-        recent = df.tail(30)
+        # 4. Macro Price Action (Structure Breakouts over meerdere candles)
+        recent = df.tail(20)
         r_highs = recent['high'].values
         r_lows = recent['low'].values
         r_closes = recent['close'].values
-        r_opens = recent['open'].values
 
-        # Fair Value Gaps (FVG) - Strikte disbalans check
-        fvg_bullish = False
-        fvg_bearish = False
-        for i in range(len(recent) - 2):
-            if r_lows[i+2] > r_highs[i] and (r_closes[i+1] - r_opens[i+1]) > (r_highs[i+1] - r_lows[i+1]) * 0.5:
-                fvg_bullish = True
-            if r_highs[i+2] < r_lows[i] and (r_opens[i+1] - r_closes[i+1]) > (r_highs[i+1] - r_lows[i+1]) * 0.5:
-                fvg_bearish = True
-
-        # Liquidity Sweep / Stop Hunt (SFP)
-        prev_high = r_highs[:-1].max()
-        prev_low = r_lows[:-1].min()
-        sfp_bullish = r_lows[-1] < prev_low and r_closes[-1] > prev_low
-        sfp_bearish = r_highs[-1] > prev_high and r_closes[-1] < prev_high
-
-        # Market Structure Shift / BOS (Harde vereiste)
-        bos_bullish = r_closes[-1] > r_highs[-2] and r_closes[-2] > r_closes[-3]
-        bos_bearish = r_closes[-1] < r_lows[-2] and r_closes[-2] < r_closes[-3]
+        macro_breakout_bullish = r_closes[-1] > r_highs[:-1].max() * 0.995
+        macro_breakout_bearish = r_closes[-1] < r_lows[:-1].min() * 1.005
 
         return {
             'rsi': current_rsi,
-            'is_squeeze': bool(is_squeeze),
-            'is_volume_spike': bool(is_volume_spike),
-            'fvg_bullish': bool(fvg_bullish),
-            'fvg_bearish': bool(fvg_bearish),
-            'sfp_bullish': bool(sfp_bullish),
-            'sfp_bearish': bool(sfp_bearish),
-            'bos_bullish': bool(bos_bullish),
-            'bos_bearish': bool(bos_bearish),
-            'trend': float((close.iloc[-1] - close.iloc[-10]) / close.iloc[-10]),
-            'volatility': float(std20.iloc[-1] / close.iloc[-1])
+            'is_uptrend': bool(is_uptrend),
+            'is_downtrend': bool(is_downtrend),
+            'is_volume_expansion': bool(is_volume_expansion),
+            'macro_breakout_bullish': bool(macro_breakout_bullish),
+            'macro_breakout_bearish': bool(macro_breakout_bearish),
+            'trend_slope': float((close.iloc[-1] - close.iloc[-5]) / close.iloc[-5]),
+            'volatility': float(close.rolling(window=20).std().iloc[-1] / close.iloc[-1])
         }
 
-    ind_15m = compute_indicators(df_15m)
-    ind_1h = compute_indicators(df_1h)
+    ind_4h = compute_macro_indicators(df_4h)
+    ind_1d = compute_macro_indicators(df_1d)
 
     score = 50.0
     signal = 'none'
 
-    # --- ULTIEME SNIPER LOGICA (Symmetrisch & Streng) ---
-    is_long_setup = (ind_15m['sfp_bullish'] or ind_15m['fvg_bullish'] or ind_15m['rsi'] < 28) and ind_15m['bos_bullish'] and ind_1h['trend'] > -0.005
-    is_short_setup = (ind_15m['sfp_bearish'] or ind_15m['fvg_bearish'] or ind_15m['rsi'] > 72) and ind_15m['bos_bearish'] and ind_1h['trend'] < 0.005
+    # --- MACRO SWING LOGICA (2-3 DAGEN TRENDS) ---
+    is_long_setup = ind_4h['is_uptrend'] and ind_1d['is_uptrend'] and (ind_4h['macro_breakout_bullish'] or ind_4h['rsi'] < 45)
+    is_short_setup = ind_4h['is_downtrend'] and ind_1d['is_downtrend'] and (ind_4h['macro_breakout_bearish'] or ind_4h['rsi'] > 55)
 
     if is_long_setup and not is_short_setup:
         signal = 'long'
-        score = 75.0
-        if ind_15m['sfp_bullish']: score += 7.0  
-        if ind_15m['fvg_bullish']: score += 6.0  
-        if ind_15m['bos_bullish']: score += 6.0  
-        if ind_15m['is_volume_spike']: score += 9.0
-        if ind_15m['is_squeeze']: score += 5.0
+        score = 78.0
+        if ind_4h['macro_breakout_bullish']: score += 10.0
+        if ind_1d['is_uptrend']: score += 8.0
+        if ind_4h['is_volume_expansion']: score += 4.0
 
     elif is_short_setup and not is_long_setup:
         signal = 'short'
-        score = 75.0
-        if ind_15m['sfp_bearish']: score += 7.0
-        if ind_15m['fvg_bearish']: score += 6.0
-        if ind_15m['bos_bearish']: score += 6.0
-        if ind_15m['is_volume_spike']: score += 9.0
-        if ind_15m['is_squeeze']: score += 5.0
+        score = 78.0
+        if ind_4h['macro_breakout_bearish']: score += 10.0
+        if ind_1d['is_downtrend']: score += 8.0
+        if ind_4h['is_volume_expansion']: score += 4.0
 
     score = min(float(score), 98.0)
+    min_score_required = 85.0
 
-    # --- VERHOOGDE DREMPELS ---
-    strictness_mode = 'strict'
-    min_score_required = 88.0  
-    
-    if ind_15m['volatility'] > 0.025:
-        strictness_mode = 'flexible'
-        min_score_required = 83.0
-    else:
-        strictness_mode = 'strict'
-        min_score_required = 88.0
+    # Veilige leverage voor swing trading (lager om liquidatie op lange termijn te vermijden)
+    leverage = 3 if score >= 90 else 2
+    trailing_mult = 2.5  # Grotere ademruimte voor multi-day swings
 
-    leverage = 1
-    trailing_mult = 1.5
-
-    if signal != 'none' and score >= min_score_required:
-        leverage = 10 if (score >= 92 and ind_15m['is_squeeze']) else 5
-        
-        if ind_15m['is_squeeze']:
-            trailing_mult = 2.0  
-        elif score >= 94:
-            trailing_mult = 1.2  
-        else:
-            trailing_mult = 1.5
-    else:
+    if signal == 'none' or score < min_score_required:
         signal = 'none'
         score = 50.0
+        leverage = 1
 
     return {
         'pattern_score': float(score),
@@ -215,19 +172,10 @@ def analyze_advanced_patterns(df_15m, df_1h):
         'recommended_leverage': int(leverage),
         'recommended_trailing_mult': float(trailing_mult),
         'min_score_required': float(min_score_required),
-        'strictness_mode': strictness_mode,
-        'rsi_15m': round(ind_15m['rsi'], 2),
-        'rsi_1h': round(ind_1h['rsi'], 2),
-        'volume_spike': ind_15m['is_volume_spike'],
-        'bollinger_squeeze': ind_15m['is_squeeze'],
-        'smart_money': {
-            'fvg_bullish': ind_15m['fvg_bullish'],
-            'fvg_bearish': ind_15m['fvg_bearish'],
-            'liquidity_sweep_bullish': ind_15m['sfp_bullish'],
-            'liquidity_sweep_bearish': ind_15m['sfp_bearish'],
-            'bos_bullish': ind_15m['bos_bullish'],
-            'bos_bearish': ind_15m['bos_bearish']
-        },
+        'strictness_mode': 'macro_swing',
+        'rsi_4h': round(ind_4h['rsi'], 2),
+        'rsi_1d': round(ind_1d['rsi'], 2),
+        'volume_expansion': ind_4h['is_volume_expansion'],
         'updated_at': time.time()
     }
 
@@ -239,9 +187,8 @@ def push_state_to_github(filename, data):
     if os.path.exists(filename):
         try:
             with open(filename, 'rb') as f:
-                existing_bytes = f.read()
-            if existing_bytes == content_bytes:
-                return
+                if f.read() == content_bytes:
+                    return
         except Exception:
             pass
 
@@ -268,7 +215,7 @@ def push_state_to_github(filename, data):
         pass
 
     payload = {
-        "message": f"Auto-update Final Boss sniper state {filename} [skip ci]",
+        "message": f"Auto-update Swing Boss state {filename} [skip ci]",
         "content": base64.b64encode(content_bytes).decode('ascii'),
         "branch": GITHUB_BRANCH
     }
@@ -279,13 +226,13 @@ def push_state_to_github(filename, data):
         req_data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(url, data=req_data, headers=headers, method='PUT')
         with urllib.request.urlopen(req, timeout=15) as resp:
-            print(f"☁️ Final Boss state {filename} gepusht naar GitHub.")
+            print(f"☁️ Swing Boss state {filename} gepusht naar GitHub.")
     except Exception as e:
         print(f"⛔ Fout bij pushen {filename}: {e}")
 
 
 def run_final_boss_scan():
-    print("--- [Final Boss Ultimate Sniper] Start marktscan ---")
+    print("--- [Final Boss Macro Swing Agent] Start marktscan ---")
     try:
         exchange.load_markets()
     except Exception as e:
@@ -297,20 +244,20 @@ def run_final_boss_scan():
         if not symbol:
             continue
         
-        df_15m = fetch_historical_candles(symbol, '15m', limit=1000)
-        df_1h = fetch_historical_candles(symbol, '1h', limit=1000)
+        df_4h = fetch_historical_candles(symbol, '4h', limit=500)
+        df_1d = fetch_historical_candles(symbol, '1d', limit=200)
         
-        if not df_15m.empty and not df_1h.empty:
-            analysis = analyze_advanced_patterns(df_15m, df_1h)
-            filename = f'pattern_state_{asset.lower()}_15m.json'
+        if not df_4h.empty and not df_1d.empty:
+            analysis = analyze_advanced_patterns(df_4h, df_1d)
+            filename = f'pattern_state_{asset.lower()}_4h.json'
             push_state_to_github(filename, analysis)
-            print(f"👑 {asset} Sniper: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']} (Min: {analysis['min_score_required']})")
+            print(f"👑 {asset} Swing: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']}")
         time.sleep(5.0)
 
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print("🚀 Final Boss Ultimate Sniper Agent gestart.")
+    print("🚀 Final Boss Macro Swing Agent gestart.")
 
     while True:
         try:
