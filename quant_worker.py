@@ -26,13 +26,51 @@ from sklearn.ensemble import RandomForestRegressor
 warnings.filterwarnings('ignore')
 logging.getLogger('xgboost').setLevel(logging.CRITICAL)
 
-# --- STAP 1: AUTOMATISCH UITVOEREN VAN GETCOINS.PY ---
+GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
+GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
+
+def push_file_to_github(filename):
+    token = os.environ.get('GITHUB_TOKEN')
+    if not token or not os.path.exists(filename):
+        return
+    try:
+        with open(filename, 'rb') as f:
+            local = f.read()
+        sha = None
+        try:
+            remote = json.loads(urllib.request.urlopen(urllib.request.Request(
+                f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}',
+                headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'}
+            )).read().decode('utf-8'))
+            sha = remote.get('sha')
+        except Exception:
+            pass
+        payload = {
+            'message': f'Auto-update {filename} [skip ci]',
+            'content': base64.b64encode(local).decode('ascii'),
+            'branch': GITHUB_BRANCH,
+        }
+        if sha:
+            payload['sha'] = sha
+        urllib.request.urlopen(urllib.request.Request(
+            f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}',
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'},
+            method='PUT'
+        ))
+        print(f"☁️ Bestand {filename} succesvol gepusht naar GitHub.")
+    except Exception as e:
+        print(f"❌ Push van {filename} mislukt: {e}")
+
+# --- STAP 1: AUTOMATISCH UITVOEREN VAN GETCOINS.PY & PUSH NAAR GITHUB ---
 try:
     print("🔄 Start automatische marktscan via getcoins.py...")
     subprocess.run(["python", "getcoins.py"], check=True)
     print("✅ Marktscan succesvol voltooid. CSV is bijgewerkt.")
+    # Push de verse ranking direct naar GitHub zodat agent en trader deze kunnen ophalen
+    push_file_to_github('kucoin_best_coins_ranking.csv')
 except Exception as e:
-    print(f"⚠️ Kon getcoins.py niet uitvoeren: {e}. We gebruiken de bestaande CSV indien aanwezig.")
+    print(f"⚠️ Kon getcoins.py niet uitvoeren of pushen: {e}. We gebruiken de bestaande CSV indien aanwezig.")
 
 # --- STAP 2: DYNAMISCHE ASSET SELECTIE (Kern + Scanner Top 5) ---
 def get_combined_trading_symbols(top_n=5):
@@ -89,9 +127,6 @@ MIN_FEATURE_ROWS = 60
 
 SL_ATR_MULT = 2.5
 TP_ATR_MULT = 5.0
-
-GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
-GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
 exchange = ccxt.kucoin({'enableRateLimit': True})
 
