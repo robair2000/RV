@@ -19,30 +19,28 @@ def fetch_top_performing_coins():
         print(f"❌ Fout bij laden markten: {e}")
         return
 
-    # Filter specifiek op actieve USDT perpetual swaps met de juiste CCXT notatie
+    # Filter ABSOLUUT uitsluitend op actieve lineaire USDT perpetual swaps (eindigend op :USDT)
     symbols = []
     for symbol, market in EXCHANGE.markets.items():
-        if market.get('linear', False) and market.get('active', True) and symbol.endswith('/USDT:USDT'):
-            symbols.append(symbol)
-            
-    if not symbols:
-        symbols = [s for s in EXCHANGE.symbols if s.endswith('/USDT') or s.endswith('/USDT:USDT')]
+        if market.get('linear', False) and market.get('active', True) and symbol.endswith(':USDT'):
+            # Zorg ervoor dat het een geldige futures notatie is met een slash en geen index of rare tokens
+            if '/' in symbol and not 'DOWN' in symbol and not 'UP' in symbol:
+                symbols.append(symbol)
 
     symbols = list(set(symbols))
-    print(f"📊 Gevonden geldige USDT Futures: {len(symbols)}. Start analyse...")
+    print(f"📊 Gevonden geldige en verhandelbare USDT Futures: {len(symbols)}. Start analyse...")
     
     results = []
 
-    # Prioriteer de belangrijkste liquiditeitstoppers als test
+    # Prioriteer de belangrijkste liquiditeitstoppers
     priority_assets = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'LINK/USDT:USDT', 'AVAX/USDT:USDT', 'XRP/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT']
     test_symbols = [s for s in priority_assets if s in symbols] + [s for s in symbols if s not in priority_assets]
 
-    for symbol in test_symbols[:50]: # Test de top 50
+    for symbol in test_symbols[:50]: # Test de top 50 geldige futures
         asset = symbol.split('/')[0]
         print(f"🔍 Analyseren van {asset:<10}", end="\r")
         
         try:
-            # Haal candles op zonder 'since' om lege datasets te vermijden
             ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=150)
             if not ohlcv or len(ohlcv) < 30:
                 continue
@@ -81,7 +79,7 @@ def fetch_top_performing_coins():
         time.sleep(0.1)
 
     if not results:
-        print("\n⚠️ Nog steeds geen resultaten. Controleer de netwerkverbinding.")
+        print("\n⚠️ Geen resultaten gevonden.")
         return
 
     res_df = pd.DataFrame(results)
@@ -94,7 +92,7 @@ def fetch_top_performing_coins():
     print("="*65)
 
     res_df.to_csv('kucoin_best_coins_ranking.csv', index=False)
-    print("\n📁 Volledige ranking opgeslagen in: kucoin_best_coins_ranking.csv")
+    print("\n📁 Volledige gezoneerde ranking opgeslagen in: kucoin_best_coins_ranking.csv")
 
 if __name__ == '__main__':
     fetch_top_performing_coins()
