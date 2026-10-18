@@ -1,0 +1,12 @@
+{
+  "pattern_score": 50.0,
+  "pattern_signal": "none",
+  "recommended_leverage": 1,
+  "recommended_trailing_mult": 2.5,
+  "min_score_required": 85.0,
+  "strictness_mode": "macro_swing",
+  "rsi_4h": 34.84,
+  "rsi_1d": 25.28,
+  "volume_expansion": false,
+  "updated_at": 1792317723.4689043
+}
