@@ -25,7 +25,8 @@ from sklearn.ensemble import RandomForestRegressor
 warnings.filterwarnings('ignore')
 logging.getLogger('xgboost').setLevel(logging.CRITICAL)
 
-assets = ['BTC', 'ETH', 'LINK']
+# 1. UITGEBREID MET SOL EN AVAX
+assets = ['BTC', 'ETH', 'LINK', 'SOL', 'AVAX']
 
 # Aangepast naar 4h en 1d voor multi-day swing trends
 timeframes = {
@@ -51,8 +52,8 @@ MIN_HOLDOUT = 15
 MIN_TRAIN_ROWS = 25
 MIN_FEATURE_ROWS = 60
 
-# Ruimere SL en TP voor multi-day swing trades
-SL_ATR_MULT = 2.0
+# 2. AFGESTSTEMD OP DE SWING STRATEGIE (SL/TP)
+SL_ATR_MULT = 2.5
 TP_ATR_MULT = 4.0
 
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
