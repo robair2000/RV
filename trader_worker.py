@@ -37,6 +37,16 @@ TRADE_CHECK_INTERVAL_SECONDS = 3600   # Elk uur controleren op nieuwe swing setu
 POSITION_CHECK_INTERVAL_SECONDS = 120 # Elke 2 minuten posities controleren
 
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
+
+# OPTIMALISATIE 3: DYNAMIC SIZING PER ASSET (Sterke munten krijgen meer gewicht)
+ASSET_MARGIN_WEIGHTS = {
+    'BTC': 1.5,   # 30 USDT bij 20 basis
+    'LINK': 1.5,  # 30 USDT bij 20 basis (sterke historische performer)
+    'ETH': 1.0,   # 20 USDT
+    'SOL': 1.0,   # 20 USDT (volatieler, standaard behouden)
+    'AVAX': 1.0   # 20 USDT (volatieler, standaard behouden)
+}
+
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
@@ -53,7 +63,9 @@ COOLDOWN_SECONDS = 7200
 
 TP_ATR_mult_BASE = 4.0
 MAX_NOTIONAL_OVERSHOOT = 1.5
-MIN_SCORE = 2
+
+# OPTIMALISATIE 2: VERHOOGDE KWALITEITSDREMPEL VOOR BOSS SCORE
+MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 88.0))
 
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 
@@ -309,8 +321,12 @@ def ensure_margin_and_leverage(symbol, target_leverage):
         return False
 
 
-def compute_contract_amount(symbol, price, leverage):
-    target = TRADE_AMOUNT_USDT * leverage
+def compute_contract_amount(asset, symbol, price, leverage):
+    # Dynamic sizing per asset toegepast
+    weight = ASSET_MARGIN_WEIGHTS.get(asset, 1.0)
+    target_margin = TRADE_AMOUNT_USDT * weight
+    target = target_margin * leverage
+    
     try:
         contract_size = float(exchange.market(symbol).get('contractSize') or 1.0)
     except Exception:
@@ -377,7 +393,8 @@ def evaluate_and_trade(asset, symbol):
         boss_leverage = int(pattern_st.get('recommended_leverage', 2))
         boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 2.5))
         
-        if boss_signal != signal or boss_score < 85.0:
+        # Strenge score drempel toegepast (MIN_BOSS_SCORE = 88.0)
+        if boss_signal != signal or boss_score < MIN_BOSS_SCORE:
             return
     else:
         return
@@ -389,7 +406,8 @@ def evaluate_and_trade(asset, symbol):
 
     if not ensure_margin_and_leverage(symbol, boss_leverage):
         return
-    amount = compute_contract_amount(symbol, price, boss_leverage)
+        
+    amount = compute_contract_amount(asset, symbol, price, boss_leverage)
     if amount is None:
         return
 
