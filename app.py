@@ -7,15 +7,15 @@ import ccxt
 
 # Pagina configuratie
 st.set_page_config(
-    page_title="RV Institutional Quant & Trader Dashboard",
+    page_title="RV Institutional Quant & Trader Dashboard (V20)",
     page_icon="⚡",
     layout="wide"
 )
 
-st.title("⚡ RV Institutional Macro Swing Hub")
-st.markdown("*Real-time ML Model Monitoring, Macro Swing Gatekeeper & Signal Synchronization (4h / 1d)*")
+st.title("⚡ RV Institutional S&R / S&D Swing Hub (V20)")
+st.markdown("*Real-time ML Meta-Labeling, S&R Confluence Gatekeeper & Zone-Based Limit Order Monitoring*")
 
-# Sidebar: Asset keuze & Tijdinterval (uitgebreid met SOL en AVAX)
+# Sidebar: Asset keuze & Tijdinterval
 asset_options = {
     'Bitcoin (BTC)': 'BTC',
     'Ethereum (ETH)': 'ETH',
@@ -76,7 +76,7 @@ trader_status_file = "trader_status.json"
 if df is not None and not df.empty:
     current_price = float(df['close'].iloc[-1])
     
-    # --- LAAD FINAL BOSS STATE ---
+    # --- LAAD V20 S&R & S&D PATTERN STATE ---
     boss_state = {}
     if os.path.exists(pattern_file):
         try:
@@ -94,7 +94,7 @@ if df is not None and not df.empty:
             prob = state.get('direction_probability', 50.0)
             sl = state.get('stop_loss', 0.0)
             tp = state.get('take_profit', 0.0)
-            regime = state.get('current_regime', 'sideways')
+            regime = state.get('current_regime', 'trending')
             
             if predicted_price is not None:
                 signal = state.get('signal')
@@ -104,21 +104,21 @@ if df is not None and not df.empty:
                     pred_ret_pct = (predicted_price - last_close) / last_close * 100
                 skill = state.get('baseline_error')
 
-                # --- FINAL BOSS DATA EXTRACTIE ---
+                # --- V20 DATA EXTRACTIE ---
                 boss_signal = boss_state.get('pattern_signal', 'none')
                 boss_score = boss_state.get('pattern_score', 50.0)
-                min_score_req = boss_state.get('min_score_required', 85.0)
-                strictness = boss_state.get('strictness_mode', 'macro_swing')
+                min_score_req = boss_state.get('min_score_required', 84.0)
+                strictness = boss_state.get('strictness_mode', 'v20_sr_sd_confluence')
                 rec_leverage = boss_state.get('recommended_leverage', 2)
 
                 # --- SAMENVATTING & TRADER-SYNCHRONISATIE STATUS ---
-                st.markdown("### 👑 Macro Swing Boss & Trader Status")
+                st.markdown("### 👑 V20 S&R Confluence & Trader Status")
                 if boss_signal == signal and boss_score >= min_score_req:
-                    st.success(f"✅ **GOEDKEURING:** Swing Boss en Quant Model zijn in lijn ({signal.upper()}). Score: {boss_score} (Vereist: {min_score_req}). De trader mag handelen met {rec_leverage}x hefboom!")
+                    st.success(f"✅ **GOEDKEURING:** S&R Confluence Agent en Quant Model zijn in lijn ({signal.upper()}). Score: {boss_score} (Vereist: {min_score_req}). De trader plaatst intelligente limit orders met {rec_leverage}x hefboom!")
                 elif boss_signal != signal:
-                    st.warning(f"⚠️ **VETO (Richting):** Swing Boss ziet '{boss_signal.upper()}' terwijl Quant model '{signal.upper()}' aangeeft. De trader houdt zich koest.")
+                    st.warning(f"⚠️ **VETO (Richting):** S&R Agent ziet '{boss_signal.upper()}' terwijl Quant model '{signal.upper()}' aangeeft. De trader houdt zich koest.")
                 else:
-                    st.info(f"⏸ **VETO (Score):** Signaal komt overeen, maar de score ({boss_score}) is te laag voor de huidige modus (vereist: {min_score_req}).")
+                    st.info(f"⏸ **VETO (Score):** Signaal komt overeen, maar de score ({boss_score}) is te laag (vereist: {min_score_req}).")
 
                 # --- RIJ 1: Kernkoersen & Voorspelling ---
                 col1, col2, col3, col4 = st.columns(4)
@@ -126,13 +126,13 @@ if df is not None and not df.empty:
                 col2.metric(f"Voorspelling volgende {interval_code}-candle", f"${predicted_price:,.2f}",
                             delta=f"{pred_ret_pct:+.3f}% t.o.v. laatste close", delta_color="normal")
                 col3.metric("RSI (14)", f"{df['RSI'].iloc[-1]:.1f}")
-                col4.metric("Swing Boss Score", f"{boss_score} / 100", delta=f"Min. vereist: {min_score_req}")
+                col4.metric("V20 Confluence Score", f"{boss_score} / 100", delta=f"Min. vereist: {min_score_req}")
 
                 # --- RIJ 2: Regimes & Hefboom ---
                 col5, col6, col7, col8 = st.columns(4)
-                col5.metric("Boss Modus", strictness.capitalize())
+                col5.metric("Strategie Modus", strictness.replace('_', ' ').capitalize())
                 col6.metric("Aanbevolen Hefboom", f"{rec_leverage}x")
-                col7.metric("Trend Richting", boss_signal.upper())
+                col7.metric("S&R Trend Richting", boss_signal.upper())
                 col8.metric("Kans op stijging (Quant)", f"{prob:.1f}%")
 
                 # --- RIJ 3: Stop-Loss, Take-Profit & Model Details ---
@@ -142,13 +142,13 @@ if df is not None and not df.empty:
 
                 col9, col10, col11, col12 = st.columns(4)
                 col9.metric("Model SL (2.5x ATR)", sl_txt)
-                col10.metric("Model TP (4.0x ATR)", tp_txt)
+                col10.metric("Model TP (5.0x ATR)", tp_txt)
                 col11.metric("Marktregime", regime.capitalize())
                 col12.metric("Skill (<1 = beter dan baseline)", f"{skill:.2f}" if isinstance(skill, (int, float)) else "n.v.t.")
 
                 # --- LIVE TRADER WORKER STATUS SECTIE ---
                 st.markdown("---")
-                st.markdown("### 🤖 Actieve Trader Worker Live Status (Exchange)")
+                st.markdown("### 🤖 Actieve Trader Worker Live Status (Exchange & Zone Limits)")
 
                 if os.path.exists(trader_status_file):
                     try:
@@ -157,25 +157,25 @@ if df is not None and not df.empty:
                         
                         active_t = t_status.get('active_trades', {})
                         if active_t:
-                            st.warning(f"🚨 **Actieve Posities op Exchange:** {len(active_t)} openstaand")
+                            st.warning(f"🚨 **Actieve Posities / Limit Orders op Exchange:** {len(active_t)} openstaand")
                             for sym, t_data in active_t.items():
                                 c_a, c_b, c_c, c_d = st.columns(4)
                                 c_a.metric("Symbool & Richting", f"{sym} ({t_data.get('side').upper()})")
-                                c_b.metric("Instapprijs", f"${t_data.get('entry'):,.2f}")
-                                c_c.metric("Actieve Stop-Loss", f"${t_data.get('sl'):,.2f}")
-                                c_d.metric("Take-Profit", f"${t_data.get('tp'):,.2f}")
+                                c_b.metric("Limit Entry (Pullback)", f"${t_data.get('entry'):,.2f}")
+                                c_c.metric("Stop-Loss (Trigger)", f"${t_data.get('sl'):,.2f}")
+                                c_d.metric("Take-Profit (Trigger)", f"${t_data.get('tp'):,.2f}")
                                 
                                 is_be = t_data.get('breakeven_secured', False)
                                 if is_be:
                                     st.success("🔒 **Breakeven Beveiliging:** Actief (Stop-loss staat op of boven entry!)")
                                 else:
-                                    st.caption("ℹ️ Breakeven Beveiliging activeert zodra de winst ≥ 2.0x ATR is.")
+                                    st.caption("ℹ️ Breakeven Beveiliging activeert zodra de winst ≥ 2.4x ATR is.")
                         else:
-                            st.info("ℹ️ Geen actieve posities op de exchange momenteel.")
+                            st.info("ℹ️ Geen actieve trades of open zone-limit orders op de exchange momenteel.")
                     except Exception as e:
                         st.error(f"Kon trader status niet laden: {e}")
                 else:
-                    st.info("ℹ️ Wacht op de eerste positie-check van de `trader_worker`...")
+                    st.info("ℹ️ Wacht op de eerste status-update van de `trader_worker`...")
 
             else:
                 st.warning("Model state gevonden, maar nog geen voorspelling beschikbaar.")
@@ -183,10 +183,10 @@ if df is not None and not df.empty:
             st.markdown("---")
             
             # --- UITKLAPMENU ---
-            with st.expander("📊 Bekijk Model State, Swing Boss JSON & Ensemble Gewichten"):
+            with st.expander("📊 Bekijk Model State, S&R Pattern JSON & Ensemble Gewichten"):
                 col_a, col_b = st.columns(2)
                 with col_a:
-                    st.subheader("Swing Boss State (Pattern JSON)")
+                    st.subheader("S&R & S&D Pattern State (JSON)")
                     st.json(boss_state)
                 with col_b:
                     st.subheader("Quant Model State (JSON)")
