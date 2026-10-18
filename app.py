@@ -83,15 +83,18 @@ def load_dashboard_data(symbol, tf_info):
 
 @st.cache_resource
 def get_exchange_client():
-    return ccxt.kucoin({
+    exch = ccxt.kucoin({
         'apiKey': os.getenv('KUCOIN_API_KEY', ''),
         'secret': os.getenv('KUCOIN_API_SECRET', ''),
         'password': os.getenv('KUCOIN_API_PASSWORD', ''),
         'enableRateLimit': True,
         'options': {'defaultType': 'swap'},
     })
-
-exchange = get_exchange_client()
+    try:
+        exch.load_markets()
+    except Exception:
+        pass
+    return exch
 
 # --- MAAK TWEE TABS AAN ---
 tab1, tab2 = st.tabs(["🚀 Dashboard & Live Trades", "⚙️ Systeem & Worker Status"])
