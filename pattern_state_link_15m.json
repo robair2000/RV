@@ -3,7 +3,7 @@
   "pattern_signal": "long",
   "recommended_leverage": 10,
   "recommended_trailing_mult": 2.0,
-  "min_score_required": 85.0,
+  "min_score_required": 88.0,
   "strictness_mode": "strict",
   "rsi_15m": 65.67,
   "rsi_1h": 62.14,
@@ -17,5 +17,5 @@
     "bos_bullish": true,
     "bos_bearish": false
   },
-  "updated_at": 1792316941.340454
+  "updated_at": 1792317130.2009854
 }
