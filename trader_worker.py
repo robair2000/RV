@@ -455,4 +455,4 @@ def evaluate_and_trade(asset, symbol):
         score += 1
     elif ENABLE_BTC_CORRELATION:
         btc = load_state('BTC', '15m')
-        opposite = 'short' if is_long else 'long
+        opposite = 'short' if is_long else 'long'
