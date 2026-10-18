@@ -1,0 +1,75 @@
+{
+    "learning_rate": 0.05,
+    "lookback_window": 120,
+    "current_regime": "trending",
+    "regime_features": {
+        "trending": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "dist_ema9",
+            "dist_ema21",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "OBV_slope",
+            "VWAP_dist",
+            "Supertrend_dist"
+        ],
+        "sideways": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "dist_ema9",
+            "dist_ema21",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "OBV_slope",
+            "VWAP_dist",
+            "Supertrend_dist"
+        ]
+    },
+    "active_features": [
+        "return_1",
+        "dist_sma20",
+        "dist_sma50",
+        "dist_ema9",
+        "dist_ema21",
+        "RSI",
+        "atr_ratio",
+        "bb_position",
+        "OBV_slope",
+        "VWAP_dist",
+        "Supertrend_dist"
+    ],
+    "last_trained_timestamp": 1792318681.5388849,
+    "model_weights": {
+        "xgb": 0.32611967592934155,
+        "cat": 0.3643103199859338,
+        "rf": 0.30957000408472474
+    },
+    "model_errors": {
+        "xgb": null,
+        "cat": null,
+        "rf": null
+    },
+    "baseline_error": 1.0543145198957664,
+    "last_prediction": 11.959465099897841,
+    "last_prediction_price": 11.959465099897841,
+    "predicted_return_pct": -0.21139193063012038,
+    "direction_probability": 51.542930603027344,
+    "signal": "none",
+    "signal_probability": 50.0,
+    "holdout_direction_accuracy": 0.6333333333333333,
+    "holdout_classifier_accuracy": null,
+    "holdout_samples": 0,
+    "atr": 0.20747857142857157,
+    "atr_pct": 1.7311809244090144,
+    "last_close": 11.9848,
+    "last_candle_ts": 0,
+    "data_status": "ok",
+    "stop_loss": 0.0,
+    "take_profit": 0.0,
+    "updated_at": 1792318681
+}
