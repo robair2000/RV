@@ -262,20 +262,31 @@ def close_position(symbol, side, contracts):
         return False
 
 
-def update_exchange_stop_loss(symbol, side, new_sl):
+def update_exchange_stop_loss(symbol, side, contracts, new_sl):
+    """
+    Maakt EERST de nieuwe stop-order aan met de correcte hoeveelheid contracten, 
+    en annuleert PAS DAARNA de oude stop-orders om onbeschermde momenten te voorkomen.
+    """
     if DRY_RUN:
         return
     try:
-        open_orders = exchange.fetch_open_orders(symbol)
-        for o in open_orders:
-            if o.get('type') == 'stop' or 'stop' in o.get('info', {}).get('stop', '').lower():
-                exchange.cancel_order(o['id'], symbol)
-
         close_side = 'sell' if side == 'long' else 'buy'
-        exchange.create_order(symbol, 'stop', close_side, 0, new_sl, {
+        
+        # 1. Plaats EERST de nieuwe stop order
+        new_order = exchange.create_order(symbol, 'stop', close_side, contracts, None, {
             'stopPrice': new_sl,
             'reduceOnly': True
         })
+        new_order_id = new_order.get('id') if new_order else None
+
+        # 2. Annuleer PAS DAARNA de oude stop orders (behalve de net geplaatste)
+        open_orders = exchange.fetch_open_orders(symbol)
+        for o in open_orders:
+            if o.get('id') != new_order_id and (o.get('type') == 'stop' or 'stop' in str(o.get('info', {})).lower()):
+                try:
+                    exchange.cancel_order(o['id'], symbol)
+                except Exception:
+                    pass
     except Exception as e:
         print(f"⚠️ Kon exchange stop-loss niet bijwerken voor {symbol}: {e}")
 
@@ -363,7 +374,7 @@ def manage_open_positions_and_trailing_stops(symbols):
             tp_hit = price <= trade['tp']
 
         if trade['sl'] != old_sl:
-            update_exchange_stop_loss(symbol, side, trade['sl'])
+            update_exchange_stop_loss(symbol, side, contracts, trade['sl'])
             
         if stop_hit or tp_hit:
             if close_position(symbol, side, contracts):
@@ -394,10 +405,6 @@ def ensure_margin_and_leverage(symbol, target_leverage):
 
 
 def compute_contract_amount(asset, symbol, price, leverage):
-    """
-    Berekent het aantal contracten streng. Weigert de trade direct als de 
-    minimale contractwaarde van de exchange groter is dan de gewenste doel-notional.
-    """
     weight = ASSET_MARGIN_WEIGHTS.get(asset, 1.0)
     target_margin = TRADE_AMOUNT_USDT * weight
     target_notional = target_margin * leverage
@@ -414,7 +421,6 @@ def compute_contract_amount(asset, symbol, price, leverage):
     if per_contract_notional <= 0:
         return None
         
-    # STRIKTE VEILIGHEIDSCHECK: Als 1 minimum contract groter is dan de doel-notional, sla over!
     if per_contract_notional > target_notional:
         print(f"⚠️ Minimale contractwaarde voor {symbol} ({per_contract_notional:.2f} USDT) is groter dan doel-notional ({target_notional:.2f} USDT). Sla over.")
         return None
