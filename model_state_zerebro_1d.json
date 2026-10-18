@@ -1,0 +1,78 @@
+{
+    "learning_rate": 0.060000000000000005,
+    "lookback_window": 100,
+    "current_regime": "trending",
+    "regime_features": {
+        "trending": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ],
+        "sideways": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ]
+    },
+    "active_features": [
+        "return_1",
+        "dist_sma20",
+        "dist_sma50",
+        "RSI",
+        "atr_ratio",
+        "bb_position",
+        "ADX",
+        "MACD_hist",
+        "OBV_slope",
+        "VWAP_dist",
+        "dist_support",
+        "dist_resistance"
+    ],
+    "last_trained_timestamp": 1792364482.5545483,
+    "model_weights": {
+        "xgb": 0.3363486510742716,
+        "cat": 0.3288524115453888,
+        "rf": 0.3347989373803396
+    },
+    "model_errors": {
+        "xgb": null,
+        "cat": null,
+        "rf": null
+    },
+    "baseline_error": 0.9968169419398129,
+    "last_prediction": 0.034706510101772,
+    "last_prediction_price": 0.034706510101772,
+    "predicted_return_pct": 16.34767047191418,
+    "direction_probability": 39.85770797729492,
+    "signal": "none",
+    "signal_probability": 50.0,
+    "holdout_direction_accuracy": 0.56,
+    "holdout_classifier_accuracy": null,
+    "holdout_samples": 0,
+    "atr": 0.006811428571428572,
+    "atr_pct": 22.83415545232508,
+    "last_close": 0.02983,
+    "last_candle_ts": 0,
+    "data_status": "ok",
+    "stop_loss": 0.0,
+    "take_profit": 0.0,
+    "updated_at": 1792364482
+}
