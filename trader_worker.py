@@ -142,7 +142,6 @@ def execute_with_retry(func, retries=3, delay=2):
 
 
 def push_trader_status_to_github():
-    """Pusht ALLEEN naar GitHub bij werkelijke wijzigingen, nooit meer blind elke minuut."""
     data = {
         'updated_at': time.time(),
         'active_trades': active_trades,
@@ -247,7 +246,6 @@ def close_position(symbol, side, contracts):
     if DRY_RUN:
         return True
     try:
-        # Annuleer openstaande SL/TP orders op de exchange
         try:
             open_orders = exchange.fetch_open_orders(symbol)
             for o in open_orders:
@@ -265,7 +263,6 @@ def close_position(symbol, side, contracts):
 
 
 def update_exchange_stop_loss(symbol, side, new_sl):
-    """Werkt de stop-loss op de exchange actief bij wanneer de trailing stop beweegt."""
     if DRY_RUN:
         return
     try:
@@ -365,7 +362,6 @@ def manage_open_positions_and_trailing_stops(symbols):
             stop_hit = price >= trade['sl']
             tp_hit = price <= trade['tp']
 
-        # Als de SL is opgeschoven, synchroniseer dit direct met de exchange
         if trade['sl'] != old_sl:
             update_exchange_stop_loss(symbol, side, trade['sl'])
             
@@ -376,14 +372,12 @@ def manage_open_positions_and_trailing_stops(symbols):
                 active_trades.pop(symbol, None)
                 state_changed = True
 
-    # Ruim gesloten trades op uit active_trades als ze op de exchange niet meer bestaan
     to_remove = [sym for sym in active_trades if sym not in open_symbols]
     if to_remove:
         for sym in to_remove:
             active_trades.pop(sym, None)
         state_changed = True
 
-    # Push naar GitHub ALLEEN bij echte wijzigingen
     if state_changed:
         push_trader_status_to_github()
 
@@ -400,26 +394,49 @@ def ensure_margin_and_leverage(symbol, target_leverage):
 
 
 def compute_contract_amount(asset, symbol, price, leverage):
+    """
+    Berekent het aantal contracten nauwkeurig op basis van exchange contract size 
+    en voorkomt ongewenste te grote notional exposure door minimale contractgrootte.
+    """
     weight = ASSET_MARGIN_WEIGHTS.get(asset, 1.0)
     target_margin = TRADE_AMOUNT_USDT * weight
-    target = target_margin * leverage
+    target_notional = target_margin * leverage
     
     try:
-        contract_size = float(exchange.market(symbol).get('contractSize') or 1.0)
+        market_info = exchange.market(symbol)
+        contract_size = float(market_info.get('contractSize') or 1.0)
+        min_amount = float(market_info.get('limits', {}).get('amount', {}).get('min') or 1.0)
     except Exception:
+        contract_size = 1.0
+        min_amount = 1.0
+
+    per_contract_notional = price * contract_size
+    if per_contract_notional <= 0:
         return None
-    per_contract = price * contract_size
-    if per_contract <= 0:
+        
+    raw_amount = target_notional / per_contract_notional
+    amount = max(min_amount, round(raw_amount, 4))
+    
+    # Veiligheidscheck: als 1 contract al groter is dan 2.5x de gewenste notional, weiger de trade
+    if per_contract_notional > (target_notional * 2.5) and raw_amount < 1.0:
+        print(f"⚠️ Contractgrootte voor {symbol} te groot ({per_contract_notional} USDT) voor gewenste notional ({target_notional} USDT). Sla over.")
         return None
-    amount = math.floor(target / per_contract)
-    return float(max(1, amount))
+
+    return float(amount)
 
 
 def execute_live_trades_scan(symbols):
+    # PUNT 2 OPGELOST: Ruim verlopen cooldowns automatisch op
+    current_time = time.time()
+    expired_cooldowns = [sym for sym, ts in symbol_cooldowns.items() if current_time - ts > COOLDOWN_SECONDS]
+    for sym in expired_cooldowns:
+        symbol_cooldowns.pop(sym, None)
+
     pull_latest_states_from_github(symbols)
     try:
         exchange.load_markets()
         positions = execute_with_retry(lambda: exchange.fetch_positions())
+        open_orders = execute_with_retry(lambda: exchange.fetch_open_orders())
     except Exception:
         return
 
@@ -428,13 +445,21 @@ def execute_live_trades_scan(symbols):
         if abs(float(p.get('contracts') or 0)) > 0:
             active_symbols.add(p.get('symbol'))
 
+    # PUNT 1 OPGELOST: Voorkom dubbele openstaande orders voor hetzelfde symbool
+    pending_order_symbols = set()
+    for o in open_orders:
+        if o.get('status') == 'open':
+            pending_order_symbols.add(o.get('symbol'))
+
     if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
         return
 
     for symbol in symbols:
         if symbol not in exchange.markets or symbol in active_symbols or symbol in symbol_cooldowns:
             continue
-        if time.time() - symbol_cooldowns.get(symbol, 0) < COOLDOWN_SECONDS:
+        if symbol in pending_order_symbols:
+            continue # Er staat al een limiet-order open, niet spammen!
+        if current_time - symbol_cooldowns.get(symbol, 0) < COOLDOWN_SECONDS:
             continue
         try:
             asset = symbol.split('/')[0].split(':')[0]
@@ -472,6 +497,13 @@ def evaluate_and_trade(asset, symbol):
         return
 
     is_long = (quant_signal == 'long')
+
+    # PUNT 4 OPGELOST: Corrigeer de directionele meta-classifier / stijgingskans voor shorts
+    direction_prob = float(state_4h.get('direction_probability', 50.0))
+    if is_long and direction_prob < 50.0:
+        return  # Long vereist kans op stijging >= 50%
+    if not is_long and direction_prob > 50.0:
+        return  # Short vereist kans op stijging <= 50% (dus kans op daling)
 
     if is_long:
         limit_price = price - (0.2 * atr)
