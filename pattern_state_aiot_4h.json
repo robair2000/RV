@@ -1,0 +1,11 @@
+{
+  "pattern_score": 50.0,
+  "pattern_signal": "none",
+  "recommended_leverage": 2,
+  "recommended_trailing_mult": 2.5,
+  "min_score_required": 84.0,
+  "strictness_mode": "v20_sr_sd_confluence",
+  "atr_pct": 8.74,
+  "adx_4h": 32.98,
+  "updated_at": 1792341680.5379093
+}
