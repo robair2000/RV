@@ -176,10 +176,10 @@ with tab1:
         
         if predicted_price is not None:
             signal = state.get('signal')
-            last_close = state.get('last_close') or current_price
-            pred_ret_pct = state.get('predicted_return_pct')
-            if pred_ret_pct is None:
-                pred_ret_pct = ((predicted_price - current_price) / current_price) * 100
+            
+            # Altijd vers berekenen t.o.v. de huidige live koers
+            pred_ret_pct = ((predicted_price - current_price) / current_price) * 100
+            
             skill = state.get('baseline_error')
 
             boss_signal = boss_state.get('pattern_signal', 'none')
@@ -199,7 +199,7 @@ with tab1:
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Huidige Koers (KuCoin, live)", f"${current_price:,.2f}")
             col2.metric(f"Voorspelling volgende {interval_code}-candle", f"${predicted_price:,.2f}",
-                        delta=f"{pred_ret_pct:+.3f}% t.o.v. laatste close", delta_color="normal")
+                        delta=f"{pred_ret_pct:+.3f}% t.o.v. live koers", delta_color="normal")
             col3.metric("RSI (14)", f"{df['RSI'].iloc[-1]:.1f}")
             col4.metric("V20 Confluence Score", f"{boss_score} / 100", delta=f"Min. vereist: {min_score_req}")
 
