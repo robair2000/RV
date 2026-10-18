@@ -1,3 +1,4 @@
+import base64
 import json
 import math
 import os
@@ -84,6 +85,56 @@ def execute_with_retry(func, retries=3, delay=2):
             delay *= 2
 
 
+def push_trader_status_to_github():
+    """Slaat de live status op en pusht trader_status.json naar GitHub voor het dashboard."""
+    data = {
+        'updated_at': time.time(),
+        'active_trades': active_trades,
+        'cooldowns': symbol_cooldowns
+    }
+    filename = 'trader_status.json'
+    content_bytes = json.dumps(data, indent=2).encode('utf-8')
+
+    with open(filename, 'wb') as f:
+        f.write(content_bytes)
+
+    token = os.environ.get('GITHUB_TOKEN')
+    if not token:
+        return
+
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "trader-worker"
+    }
+
+    sha = None
+    try:
+        req = urllib.request.Request(url + f"?ref={GITHUB_BRANCH}", headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            sha = json.loads(resp.read().decode('utf-8')).get('sha')
+    except Exception:
+        pass
+
+    payload = {
+        "message": "Auto-update trader_status.json [skip ci]",
+        "content": base64.b64encode(content_bytes).decode('ascii'),
+        "branch": GITHUB_BRANCH
+    }
+    if sha:
+        payload["sha"] = sha
+
+    try:
+        req_data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(url, data=req_data, headers=headers, method='PUT')
+        with urllib.request.urlopen(req, timeout=15):
+            pass
+    except Exception:
+        pass
+
+
 def pull_latest_states_from_github():
     token = os.environ.get('GITHUB_TOKEN', '')
     files_to_pull = []
@@ -162,6 +213,8 @@ def manage_open_positions_and_trailing_stops():
         return
 
     open_symbols = set()
+    state_changed = False
+
     for pos in positions:
         contracts = abs(float(pos.get('contracts') or 0))
         if contracts == 0:
@@ -195,31 +248,32 @@ def manage_open_positions_and_trailing_stops():
                 'trailing_mult': trail_mult,
                 'breakeven_secured': False,
             }
+            state_changed = True
 
         atr = trade['atr']
         trail_mult = trade.get('trailing_mult', 2.5)
         sgn = 1 if side == 'long' else -1
         
-        # Bereken hoeveel ATR's we in de plus staan
         distance_in_atr = sgn * (price - entry) / atr if atr > 0 else 0.0
 
-        # PROFESSIONELE OPTIMALISATIE: Vanaf 2.0x ATR winst direct naar Breakeven en strakke trailing!
         if distance_in_atr >= 2.0 and not trade.get('breakeven_secured', False):
             if side == 'long' and trade['sl'] < entry:
                 trade['sl'] = entry
                 trade['breakeven_secured'] = True
+                state_changed = True
             elif side == 'short' and trade['sl'] > entry:
                 trade['sl'] = entry
                 trade['breakeven_secured'] = True
+                state_changed = True
 
         if side == 'long':
             if price > trade['peak']:
                 trade['peak'] = price
                 if distance_in_atr >= 2.0:
-                    # Activeer strakkere trailing stop om winst vast te houden
                     new_sl = price - (trail_mult * 0.8) * atr
                     if new_sl > trade['sl']:
                         trade['sl'] = new_sl
+                        state_changed = True
             stop_hit = price <= trade['sl']
             tp_hit = price >= trade['tp']
         else:
@@ -229,6 +283,7 @@ def manage_open_positions_and_trailing_stops():
                     new_sl = price + (trail_mult * 0.8) * atr
                     if new_sl < trade['sl']:
                         trade['sl'] = new_sl
+                        state_changed = True
             stop_hit = price >= trade['sl']
             tp_hit = price <= trade['tp']
             
@@ -237,6 +292,10 @@ def manage_open_positions_and_trailing_stops():
                 if pnl_fraction(side, entry, price) < 0:
                     symbol_cooldowns[symbol] = time.time()
                 active_trades.pop(symbol, None)
+                state_changed = True
+
+    if state_changed or len(active_trades) > 0:
+        push_trader_status_to_github()
 
 
 def ensure_margin_and_leverage(symbol, target_leverage):
@@ -304,11 +363,9 @@ def evaluate_and_trade(asset, symbol):
     if signal == 'none':
         return
     is_long = signal == 'long'
-    prob = float(state_4h.get('direction_probability', 50.0))
-    pred_move_pct = abs(float(state_4h.get('predicted_return_pct', 0.0)))
-    atr_pct = float(state_4h.get('atr_pct') or 0.0)
 
     price = float(exchange.fetch_ticker(symbol)['last'])
+    atr_pct = float(state_4h.get('atr_pct') or 0.0)
     if atr_pct <= 0:
         return
     atr = price * atr_pct / 100.0
@@ -354,6 +411,7 @@ def evaluate_and_trade(asset, symbol):
             'trailing_mult': boss_trailing_mult,
             'breakeven_secured': False,
         }
+        push_trader_status_to_github()
     except Exception:
         pass
 
