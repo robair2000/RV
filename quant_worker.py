@@ -128,8 +128,15 @@ def fetch_market_context_from_exchange(exch, symbol):
         if fr and 'fundingRate' in fr:
             funding = float(fr['fundingRate'])
     except Exception:
-        pass
+        try:
+            time.sleep(0.5)
+            fr = exch.fetch_funding_rate(symbol)
+            if fr and 'fundingRate' in fr:
+                funding = float(fr['fundingRate'])
+        except Exception:
+            pass
 
+    time.sleep(0.5)
     try:
         oi = exch.fetch_open_interest(swap_symbol)
         if oi and 'openInterest' in oi:
@@ -138,6 +145,7 @@ def fetch_market_context_from_exchange(exch, symbol):
     except Exception:
         pass
 
+    time.sleep(0.5)
     try:
         orderbook = exch.fetch_order_book(symbol, limit=20)
     except Exception:
