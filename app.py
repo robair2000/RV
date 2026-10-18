@@ -15,7 +15,7 @@ st.set_page_config(
 st.title("⚡ RV Institutional Macro Swing Hub")
 st.markdown("*Real-time ML Model Monitoring, Macro Swing Gatekeeper & Signal Synchronization (4h / 1d)*")
 
-# Sidebar: Asset keuze & Tijdinterval (inclusief SOL en AVAX)
+# Sidebar: Asset keuze & Tijdinterval (uitgebreid met SOL en AVAX)
 asset_options = {
     'Bitcoin (BTC)': 'BTC',
     'Ethereum (ETH)': 'ETH',
@@ -141,12 +141,12 @@ if df is not None and not df.empty:
                 tp_txt = f"${tp:,.2f}" if (show_levels and tp > 0) else "N.v.t. (Geen signaal)"
 
                 col9, col10, col11, col12 = st.columns(4)
-                col9.metric("Model SL (2.0x ATR)", sl_txt)
+                col9.metric("Model SL (2.5x ATR)", sl_txt)
                 col10.metric("Model TP (4.0x ATR)", tp_txt)
                 col11.metric("Marktregime", regime.capitalize())
                 col12.metric("Skill (<1 = beter dan baseline)", f"{skill:.2f}" if isinstance(skill, (int, float)) else "n.v.t.")
 
-                # --- NIEUW: ACTIEVE TRADER WORKER LIVE STATUS ---
+                # --- LIVE TRADER WORKER STATUS SECTIE ---
                 st.markdown("---")
                 st.markdown("### 🤖 Actieve Trader Worker Live Status (Exchange)")
 
