@@ -67,7 +67,7 @@ def get_combined_trading_assets(top_n=5):
     """
     Combineert altijd de vaste kern met de geldige top N futures uit de ranking CSV.
     """
-    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'LINK/USDT:USDT']
+    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_symbols = []
     
