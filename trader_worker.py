@@ -232,7 +232,6 @@ def manage_open_positions_and_trailing_stops():
         trail_mult = trade.get('trailing_mult', 1.5)
         current_pnl_pct = pnl_fraction(side, entry, price)
         
-        # Zuivere logica per kant zonder scope-lekkage
         if side == 'long':
             if price > trade['peak']:
                 trade['peak'] = price
@@ -325,9 +324,6 @@ def compute_contract_amount(symbol, price, leverage):
     return float(amount)
 
 
-# =====================================================================
-# SCAN & EVALUATIE (MET PORTFOLIO EXPOSURE & FINAL BOSS GATEKEEPER)
-# =====================================================================
 def resolve_symbol(asset):
     primary = f"{asset}/USDT:USDT"
     if primary in exchange.markets:
@@ -398,9 +394,6 @@ def evaluate_and_trade(asset, symbol):
         return
     atr = price * atr_pct / 100.0
 
-    # =====================================================================
-    # 👑 FINAL BOSS GATEKEEPER & ADAPTIEVE DREMPEL CONTROLE
-    # =====================================================================
     pattern_st = load_pattern_state(asset, '15m')
     if pattern_st:
         boss_signal = pattern_st.get('pattern_signal', 'none')
@@ -408,7 +401,7 @@ def evaluate_and_trade(asset, symbol):
         boss_leverage = int(pattern_st.get('recommended_leverage', 10))
         boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 1.5))
         
-        dynamic_min_score = float(pattern_st.get('min_score_required', 75.0))
+        dynamic_min_score = float(pattern_st.get('min_score_required', 85.0))
         strictness_mode = pattern_st.get('strictness_mode', 'strict')
         is_squeeze = pattern_st.get('bollinger_squeeze', False)
         
@@ -427,12 +420,9 @@ def evaluate_and_trade(asset, symbol):
 
     sgn = 1 if is_long else -1
     stop_loss_val = price - sgn * boss_trailing_mult * atr
-    
-    # Dynamische TP op basis van trailing_mult zodat squeeze-trades (mult=2.0) altijd aan RRR >= MIN_RRR voldoen
     effective_tp_mult = max(TP_ATR_mult_BASE, boss_trailing_mult * (MIN_RRR + 0.1))
     take_profit_val = price + sgn * effective_tp_mult * atr
 
-    # ========== HARDE & ZACHTE FILTERS (MET DEBUG LOGS) ==========
     if atr_pct < MIN_ATR_PCT or atr_pct > MAX_ATR_PCT:
         print(f"⛔ [FILTER VETO] ATR% ({atr_pct:.2f}%) buiten bereik [{MIN_ATR_PCT}, {MAX_ATR_PCT}].")
         return
@@ -446,7 +436,7 @@ def evaluate_and_trade(asset, symbol):
         print(f"⛔ [FILTER VETO] Holdout accuracy ({holdout_acc}) te laag (Min: {MIN_HOLDOUT_ACCURACY}).")
         return
 
-    score, max_score = 0, 4
+    score = 0
     state_1h = load_state(asset, '1h')
     if state_1h is not None and state_1h['signal'] == signal:
         score += 1
@@ -456,3 +446,101 @@ def evaluate_and_trade(asset, symbol):
     elif ENABLE_BTC_CORRELATION:
         btc = load_state('BTC', '15m')
         opposite = 'short' if is_long else 'long'
+        if btc is not None and btc['signal'] != opposite:
+            score += 1
+
+    try:
+        ob = exchange.fetch_order_book(symbol, limit=20)
+        time.sleep(PAUSE_AFTER_CALL)
+        bids = sum(b[1] for b in ob.get('bids', []))
+        asks = sum(a[1] for a in ob.get('asks', []))
+        if bids + asks > 0:
+            ratio = (bids if is_long else asks) / (bids + asks)
+            if ratio >= MIN_ORDERBOOK_IMBALANCE:
+                score += 1
+    except Exception:
+        pass
+
+    try:
+        funding = exchange.fetch_funding_rate(symbol).get('fundingRate')
+        time.sleep(PAUSE_AFTER_CALL)
+        if funding is not None and not ((is_long and funding > MAX_FUNDING_RATE) or
+                                        ((not is_long) and funding < -MAX_FUNDING_RATE)):
+            score += 1
+    except Exception:
+        pass
+
+    if prob < MIN_DIRECTION_PROBABILITY:
+        print(f"⛔ [FILTER VETO] Richting kans ({prob}%) is lager dan vereist ({MIN_DIRECTION_PROBABILITY}%).")
+        return
+        
+    if pred_move_pct < MIN_PREDICTED_RETURN_PCT:
+        print(f"⛔ [FILTER VETO] Voorspelde winst ({pred_move_pct}%) is lager dan vereist ({MIN_PREDICTED_RETURN_PCT}%).")
+        return
+        
+    if score < MIN_SCORE:
+        print(f"⛔ [FILTER VETO] Multi-factor score ({score}) is te laag (Vereist min: {MIN_SCORE}).")
+        return
+
+    if not ensure_margin_and_leverage(symbol, boss_leverage):
+        return
+    amount = compute_contract_amount(symbol, price, boss_leverage)
+    if amount is None:
+        print(f"⛔ [UITVOERING FOUT] Kon contracthoeveelheid niet berekenen voor {symbol}.")
+        return
+
+    side = 'buy' if is_long else 'sell'
+    direction_str = "LONG 📈" if is_long else "SHORT 📉"
+    print(f"🔥 {direction_str} {symbol}: {amount} contracten | Lev: {boss_leverage}x | SL ${stop_loss_val:.4f} | TP ${take_profit_val:.4f} (RRR: {rrr:.2f})")
+    if DRY_RUN:
+        print("[DRY_RUN] Geen order geplaatst vanwege actieve DRY_RUN modus.")
+        return
+
+    params = {
+        'stopLoss': {'triggerPrice': stop_loss_val},
+        'takeProfit': {'triggerPrice': take_profit_val},
+        'marginMode': DESIRED_MARGIN_MODE,
+    }
+    try:
+        order = execute_with_retry(lambda: exchange.create_order(symbol, 'market', side, amount, None, params))
+    except Exception:
+        try:
+            order = execute_with_retry(lambda: exchange.create_order(
+                symbol, 'market', side, amount, None, {'marginMode': DESIRED_MARGIN_MODE}
+            ))
+        except Exception as e2:
+            print(f"⛔ Fout bij orderplaatsing {symbol} na retries: {repr(e2)}")
+            return
+
+    print(f"✅ Order geplaatst: {order.get('id') if isinstance(order, dict) else order}")
+    active_trades[symbol] = {
+        'side': 'long' if is_long else 'short', 
+        'entry': price, 
+        'peak': price, 
+        'atr': atr,
+        'sl': stop_loss_val, 
+        'tp': take_profit_val,
+        'trailing_mult': boss_trailing_mult,
+    }
+
+
+if __name__ == '__main__':
+    threading.Thread(target=run_server, daemon=True).start()
+    print(f"Futures Live Trader Worker gestart ({EXCHANGE_ID}, ${TRADE_AMOUNT_USDT} margin, {DESIRED_MARGIN_MODE}"
+          f"{', DRY_RUN' if DRY_RUN else ''}).")
+    last_trade_check_time = 0
+
+    while True:
+        try:
+            manage_open_positions_and_trailing_stops()
+        except Exception as e:
+            print(f"Fout in positiebeheer lus: {e}")
+
+        if time.time() - last_trade_check_time >= TRADE_CHECK_INTERVAL_SECONDS:
+            try:
+                execute_live_trades_scan()
+            except Exception as e:
+                print(f"Fout in trades scan lus: {e}")
+            last_trade_check_time = time.time()
+
+        time.sleep(POSITION_CHECK_INTERVAL_SECONDS)
