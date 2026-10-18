@@ -1,96 +1,64 @@
-# ⚡ RV Institutional Multi-Agent Crypto Trading Ecosystem
+# ⚡ RV Institutional Quant & Trader Dashboard (V20)
 
-Een geavanceerd, hiërarchisch multi-agent kwantitatief handelssysteem voor **BTC**, **ETH** en **LINK** op KuCoin Futures, aangedreven door adaptieve Machine Learning modellen en een strategische "Final Boss" marktregime-agent.
-
-> ⚠️ **Disclaimer:** Dit systeem is experimenteel en bedoeld voor kwantitatief onderzoek en geautomatiseerde uitvoering. Geen financieel advies. Test altijd eerst uitgebreid met `DRY_RUN=true`.
+Een autonoom, institutioneel-grade V20 swing-trading en machine-learning systeem op **KuCoin Futures**, gebouwd met een multi-service architectuur op Render, een centrale GitHub Single Source of Truth, en een live Streamlit-dashboard.
 
 ---
 
-## 🏗️ Systeemarchitectuur
+## 🏗️ Systeemarchitectuur & Componenten
 
-Het ecosysteem is opgebouwd uit een hiërarchie van autonome agenten die via GitHub state-payloads asynchroon met elkaar communiceren:
+Het systeem draait als een gedecentraliseerde multi-service op Render, waarbij **GitHub** fungeert als de centrale databron (`Single Source of Truth`) voor alle synchronisatie:
 
-+-----------------------------+
-                  |     Final Boss Agent        |
-                  |   (agent.py op Render)      |
-                  +--------------+--------------+
-                                 |
-                                 | Pusht pattern_state_*.json
-                                 v
-                  +-----------------------------+
-                  |      GitHub Repository      | <--- Pusht model_state_*.json
-                  +--------------+--------------+
-                                 ^                               ^
-                                 |                               |
+1. **`getcoins.py` (De Marktscanner):**
+   * Scant alle actieve lineaire USDT Futures op KuCoin.
+   * Berekent ATR, trendscores en volume om de sterkste momentummunten te identificeren.
+   * Genereert en pusht de `kucoin_best_coins_ranking.csv` naar GitHub.
 
-+-----------------------------------+--+         +------------------+---------------+
-|       Trader Worker                  |         |         Quant Worker             |
-|   (trader_worker.py op achtergrond)  |         |   (quant_worker.py via Cron/Server)|
-+--------------------------------------+         +----------------------------------+
-     
+2. **`quant_worker.py` (De Machine Learning Trainer):**
+   * Draait automatisch de scanner en haalt de top 5 dynamische munten op.
+   * Combineert deze naadloos met de vaste kern (**BTC, ETH, LINK**) voor een actieve trading scope van 8 assets.
+   * Traint ensemble-modellen (XGBoost, CatBoost, Random Forest) en pusht de `model_state_*.json` bestanden naar GitHub.
 
-### Bestandsleutel & Rollen
+3. **`agent.py` (De S&R & S&D Confluence Agent):**
+   * Trekt periodiek de actieve ranking van GitHub.
+   * Analyseert 4h en 1d candles op Support/Resistance, Supply/Demand zones en past XGBoost meta-labeling toe.
+   * Pusht de `pattern_state_*.json` bestanden naar GitHub.
 
-| Bestand | Rol | Beschrijving |
-|---|---|---|
-| **`agent.py`** | 👑 **Final Boss Agent** | Draait 24/7 als Render Web Service. Analyseert marktvolatiliteit, Bollinger Squeezes, RSI-momentum en stelt dynamisch het risicoregime, de minimale score-eisen, hefboomwerking (*leverage*) en trailing-stop multipliers vast. |
-| **`trader_worker.py`** | ⚙️ **Trader Worker** | De fouttolerante uitvoerder op KuCoin Futures. Haalt de nieuwste states op, voert een strikte **Veto-check** uit op de instructies van de Final Boss, bewaakt de totale portfolio-exposure en beheert open posities met trailing stops. |
-| **`quant_worker.py`** | 🧠 **Quant ML Worker** | Haalt marktdata en orderboek/funding-data op, traint een ensemble van XGBoost, CatBoost en RandomForest modellen, en voert out-of-sample holdout-validaties uit. |
-| **`app.py`** | 📊 **Streamlit Dashboard** | Real-time monitoring hub voor het inzien van modelvoorspellingen, ensemblegewichten, marktcontext en actieve signalen. |
+4. **`trader_worker.py` (De Uitvoerder):**
+   * Bewaakt openstaande posities, berekent dynamische trailing stops en beheert breakeven-beveiliging.
+   * Plaatst intelligente zone-based limit orders op KuCoin Futures op basis van de goedgekeurde V20 signalen.
+   * Bevat een ingebouwde webserver (`HealthCheckHandler`) met live HTML-weergave van de ranking-tabel op `/ranking`.
+
+5. **`app.py` (Het Streamlit Dashboard):**
+   * Een interactieve gebruikersinterface om in real-time koersen, ML-voorspellingen, V20-confluencescores en **live openstaande KuCoin Futures posities** te monitoren.
 
 ---
 
-## 👑 Strategie & Final Boss Gatekeeper
-
-De Trader Worker opent **alleen** een positie als voldaan is aan de volgende voorwaarden:
-1. **Richting Overeenstemming:** Het signaal van het ML-model (`long`/`short`) moet exact overeenkomen met het patroonsignaal van de Final Boss.
-2. **Dynamische Score Drempel:** De patroonscore van de Final Boss moet hoger zijn dan de op dat moment door de Boss geëiste minimumscore (`min_score_required`).
-3. **Portfolio Exposure Limit:** Er mogen maximaal **2 gelijktijdige posities** openstaan over het hele portfolio (`MAX_CONCURRENT_POSITIONS = 2`).
-4. **Harde & Zachte Risicofilters:** Voldoet aan eisen m.b.t. RRR (Risk-Reward Ratio ≥ 1.4), Holdout-nauwkeurigheid, Orderboek-imbalans en Funding-rates.
+## 🎯 Dynamische Asset Selectie
+Het systeem gebruikt een hybride portfolio-strategie:
+* **Vaste Kern:** `BTC`, `ETH`, `LINK` (altijd actief voor stabiele liquiditeit).
+* **Dynamische Top 5:** Wordt automatisch aangevuld vanuit de live marktscan (`kucoin_best_coins_ranking.csv`).
 
 ---
 
-## ⚙️ Environment Variables
+## 🚀 Deployment & Configuratie (Render)
 
-Stel de volgende omgevingsvariabelen in op je Render Web Service of lokale omgeving:
+### 1. Environment Variables (Instellen in Render Dashboard)
+Zorg ervoor dat de volgende omgevingsvariabelen zijn ingesteld voor je services:
+* `KUCOIN_API_KEY`: Jouw KuCoin API Key
+* `KUCOIN_API_SECRET`: Jouw KuCoin API Secret
+* `KUCOIN_API_PASSWORD`: Jouw KuCoin API Passphrase / Password
+* `GITHUB_TOKEN`: Een GitHub Personal Access Token (met `repo` permissies)
+* `GITHUB_REPO`: `robair2000/RV` (of jouw repository)
+* `GITHUB_BRANCH`: `main`
+* `DRY_RUN`: `false` (of `true` als je wilt testen zonder echt geld)
+* `TRADE_AMOUNT_USDT`: `20.0` (Inleg per trade in USDT)
 
-### Voor de Final Boss (`agent.py`) & Dashboard (`app.py`):
-* `GITHUB_TOKEN`: GitHub Personal Access Token (met `contents: write` rechten).
-* `GITHUB_REPO`: `robair2000/RV` (of jouw eigen repository).
-* `GITHUB_BRANCH`: `main`.
-* `EXCHANGE_ID`: `kucoin` (standaard).
-* `PORT`: `10000` (automatisch door Render ingesteld).
-
-### Voor de Trader Worker (`trader_worker.py`):
-* `KUCOIN_API_KEY`: API Sleutel van KuCoin Futures.
-* `KUCOIN_API_SECRET`: Secret Sleutel van KuCoin Futures.
-* `KUCOIN_API_PASSWORD`: Passphrase van KuCoin API.
-* `DRY_RUN`: `true` (voor simulatie) of `false` (voor daadwerkelijke handel).
-* `TRADE_AMOUNT_USDT`: Marge per positie in USDT (bijv. `20.0`).
-* `MARGIN_MODE`: `cross` of `isolated`.
-
----
-
-## 🚀 Lokaal & Server Starten
-
-1. Afhankelijkheden installeren
-bash
+### 2. Lokale Dashboard Start (Streamlit)
+Om het dashboard lokaal te draaien:
+```bash
 pip install -r requirements.txt
-
-2. Final Boss Agent starten
-Bash
-python agent.py
-
-3. Quant Worker uitvoeren (Trainingsronde)
-Bash
-python quant_worker.py
-
-4. Trader Worker starten (Live / Dry-run)
-Bash
-DRY_RUN=true python trader_worker.py
-
-5. Streamlit Dashboard openen
-Bash
 streamlit run app.py
 
+Streamlit App (app.py): Biedt volledig inzicht in live koersen, modelvoorspellingen, ensemble-gewichten en je actuele beursposities via CCXT.
 
+Trader Status Page: Bezoek de web-URL van je trader service op /ranking om de live HTML-tabel van de actieve marktscan direct in je browser te bekijken.
