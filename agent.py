@@ -73,7 +73,7 @@ def fetch_historical_candles(symbol, timeframe, limit=120):
 def analyze_advanced_patterns(df_4h, df_1d):
     """
     Final Boss Swing Mode: Analyseert 4h en 1d candles voor macro-trends 
-    die 2 tot 3 dagen (of langer) aanhouden.
+    die 2 tot 3 dagen (of langer) aanhouden, met strenge 1d trendfiltering voor shorts.
     """
     if df_4h is None or len(df_4h) < 30 or df_1d is None or len(df_1d) < 30:
         return {
@@ -123,6 +123,8 @@ def analyze_advanced_patterns(df_4h, df_1d):
             'rsi': current_rsi,
             'is_uptrend': bool(is_uptrend),
             'is_downtrend': bool(is_downtrend),
+            'close': float(close.iloc[-1]),
+            'sma20': float(sma20.iloc[-1]),
             'is_volume_expansion': bool(is_volume_expansion),
             'macro_breakout_bullish': bool(macro_breakout_bullish),
             'macro_breakout_bearish': bool(macro_breakout_bearish),
@@ -138,7 +140,10 @@ def analyze_advanced_patterns(df_4h, df_1d):
 
     # --- MACRO SWING LOGICA (2-3 DAGEN TRENDS) ---
     is_long_setup = ind_4h['is_uptrend'] and ind_1d['is_uptrend'] and (ind_4h['macro_breakout_bullish'] or ind_4h['rsi'] < 45)
-    is_short_setup = ind_4h['is_downtrend'] and ind_1d['is_downtrend'] and (ind_4h['macro_breakout_bearish'] or ind_4h['rsi'] > 55)
+    
+    # STRENGE SHORT FILTER: 1d-trend moet overduidelijk bearish zijn (downtrend én onder 1d SMA20)
+    is_1d_strictly_bearish = ind_1d['is_downtrend'] and (ind_1d['close'] < ind_1d['sma20'])
+    is_short_setup = ind_4h['is_downtrend'] and is_1d_strictly_bearish and (ind_4h['macro_breakout_bearish'] or ind_4h['rsi'] > 55)
 
     if is_long_setup and not is_short_setup:
         signal = 'long'
@@ -172,7 +177,7 @@ def analyze_advanced_patterns(df_4h, df_1d):
         'recommended_leverage': int(leverage),
         'recommended_trailing_mult': float(trailing_mult),
         'min_score_required': float(min_score_required),
-        'strictness_mode': 'macro_swing',
+        'strictness_mode': 'macro_swing_strict_shorts',
         'rsi_4h': round(ind_4h['rsi'], 2),
         'rsi_1d': round(ind_1d['rsi'], 2),
         'volume_expansion': ind_4h['is_volume_expansion'],
