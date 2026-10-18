@@ -40,6 +40,28 @@ def run_server():
     server.serve_forever()
 
 
+GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
+GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
+
+def pull_ranking_from_github():
+    """Haalt de meest recente ranking CSV op van GitHub zodat alle workers synchroon lopen."""
+    filename = 'kucoin_best_coins_ranking.csv'
+    token = os.environ.get('GITHUB_TOKEN', '')
+    url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
+    headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'v20-smart-agent'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            with open(filename + '.tmp', 'wb') as f:
+                f.write(resp.read())
+        os.replace(filename + '.tmp', filename)
+        print("📥 Verse ranking CSV succesvol opgehaald van GitHub.")
+    except Exception as e:
+        print(f"⚠️ Kon ranking CSV niet ophalen van GitHub ({e}), we gebruiken lokale versie indien aanwezig.")
+
+
 # --- CONFIGURATIE V20 S&R & SUPPLY/DEMAND AGENT ---
 def get_combined_trading_assets(top_n=5):
     """
@@ -66,15 +88,10 @@ def get_combined_trading_assets(top_n=5):
     print(f"🎯 Actieve agent trading scope ({len(combined)} assets): {combined}")
     return combined
 
-# Haal de actieve assets op bij start
-ASSETS = get_combined_trading_assets(top_n=5)
 
 TIMEFRAMES = {'4h': '4h', '1d': '1d'}
 CHECK_INTERVAL_SECONDS = 1800
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
-
-GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
-GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
 exchange = getattr(ccxt, EXCHANGE_ID)({'enableRateLimit': True})
 
@@ -355,13 +372,18 @@ def push_state_to_github(filename, data):
 
 def run_final_boss_scan():
     print("--- [V20 S&R & S&D Agent] Start marktscan ---")
+    
+    # Haal eerst de nieuwste ranking op van GitHub zodat we altijd synchroon lopen
+    pull_ranking_from_github()
+    assets = get_combined_trading_assets(top_n=5)
+
     try:
         exchange.load_markets()
     except Exception as e:
         print(f"Fout bij laden markets: {e}")
         return
 
-    for asset in ASSETS:
+    for asset in assets:
         symbol = resolve_symbol(asset)
         if not symbol:
             continue
