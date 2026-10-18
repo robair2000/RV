@@ -29,7 +29,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def log_message(self, format, *args):
-        pass  # Houd de logs schoon van standaard HTTP access logs
+        pass
 
 
 def run_server():
@@ -39,10 +39,10 @@ def run_server():
     server.serve_forever()
 
 
-# --- CONFIGURATIE FINAL BOSS AGENT ---
+# --- CONFIGURATIE FINAL BOSS AGENT (SNIPER MODE) ---
 ASSETS = ['BTC', 'ETH', 'LINK']
 TIMEFRAMES = {'15m': '15m', '1h': '1h'}
-CHECK_INTERVAL_SECONDS = 300  # Elke 5 minuten markten analyseren
+CHECK_INTERVAL_SECONDS = 300  
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
@@ -72,8 +72,8 @@ def fetch_historical_candles(symbol, timeframe, limit=120):
 
 def analyze_advanced_patterns(df_15m, df_1h):
     """
-    De Final Boss analyse met Smart Money & Institutional Price Action (Symmetrisch & Zuiver):
-    Combineert robuuste FVG's, Liquidity Sweeps, BOS, Bollinger Squeezes en RSI momentum.
+    De Final Boss Sniper Mode: Strenge, kwalitatieve Smart Money filters
+    die alleen high-conviction setups doorlaten en over-trading tegengaan.
     """
     if df_15m is None or len(df_15m) < 40 or df_1h is None or len(df_1h) < 40:
         return {
@@ -81,7 +81,7 @@ def analyze_advanced_patterns(df_15m, df_1h):
             'pattern_signal': 'none', 
             'recommended_leverage': 1, 
             'recommended_trailing_mult': 1.5,
-            'min_score_required': 75.0,
+            'min_score_required': 85.0,
             'strictness_mode': 'strict',
             'confidence': 0.0
         }
@@ -106,28 +106,26 @@ def analyze_advanced_patterns(df_15m, df_1h):
         bb_upper = sma20 + (std20 * 2)
         bb_lower = sma20 - (std20 * 2)
         bb_width = (bb_upper - bb_lower) / sma20
-        is_squeeze = bb_width.iloc[-1] < bb_width.rolling(window=50).quantile(0.2).iloc[-1]
+        is_squeeze = bb_width.iloc[-1] < bb_width.rolling(window=50).quantile(0.15).iloc[-1]
 
-        # 3. Volume Trend
+        # 3. Volume Trend (Strengere eis)
         vol_sma = volume.rolling(window=20).mean()
-        is_volume_spike = float(volume.iloc[-1]) > float(vol_sma.iloc[-1]) * 1.4
+        is_volume_spike = float(volume.iloc[-1]) > float(vol_sma.iloc[-1]) * 1.8
 
-        # 4. Institutionele Price Action (Symmetrisch & Aangescherpt SMC)
+        # 4. Institutionele Price Action (SMC Sniper)
         recent = df.tail(30)
         r_highs = recent['high'].values
         r_lows = recent['low'].values
         r_closes = recent['close'].values
         r_opens = recent['open'].values
 
-        # Fair Value Gaps (FVG) - Strikte disbalans check met body/wick spreiding
+        # Fair Value Gaps (FVG) - Alleen met krachtige impuls body
         fvg_bullish = False
         fvg_bearish = False
         for i in range(len(recent) - 2):
-            # Bullish FVG: gat tussen low van candle i+2 en high van candle i, met duidelijke opwaartse impuls
-            if r_lows[i+2] > r_highs[i] and (r_closes[i+1] > r_opens[i+1]):
+            if r_lows[i+2] > r_highs[i] and (r_closes[i+1] - r_opens[i+1]) > (r_highs[i+1] - r_lows[i+1]) * 0.4:
                 fvg_bullish = True
-            # Bearish FVG: gat tussen high van candle i+2 en low van candle i, met duidelijke neerwaartse impuls
-            if r_highs[i+2] < r_lows[i] and (r_closes[i+1] < r_opens[i+1]):
+            if r_highs[i+2] < r_lows[i] and (r_opens[i+1] - r_closes[i+1]) > (r_highs[i+1] - r_lows[i+1]) * 0.4:
                 fvg_bearish = True
 
         # Liquidity Sweep / Stop Hunt (SFP)
@@ -136,7 +134,7 @@ def analyze_advanced_patterns(df_15m, df_1h):
         sfp_bullish = r_lows[-1] < prev_low and r_closes[-1] > prev_low
         sfp_bearish = r_highs[-1] > prev_high and r_closes[-1] < prev_high
 
-        # Market Structure Shift / BOS
+        # Market Structure Shift / BOS (Verplicht voor validatie)
         bos_bullish = r_closes[-1] > r_highs[-2] and r_closes[-2] > r_closes[-3]
         bos_bearish = r_closes[-1] < r_lows[-2] and r_closes[-2] < r_closes[-3]
 
@@ -150,7 +148,7 @@ def analyze_advanced_patterns(df_15m, df_1h):
             'sfp_bearish': bool(sfp_bearish),
             'bos_bullish': bool(bos_bullish),
             'bos_bearish': bool(bos_bearish),
-            'trend': float((close.iloc[-1] - close.iloc[-5]) / close.iloc[-5]),
+            'trend': float((close.iloc[-1] - close.iloc[-10]) / close.iloc[-10]),
             'volatility': float(std20.iloc[-1] / close.iloc[-1])
         }
 
@@ -160,57 +158,55 @@ def analyze_advanced_patterns(df_15m, df_1h):
     score = 50.0
     signal = 'none'
 
-    # --- SYMMETRISCHE INSTITUTIONELE LOGICA VOOR LONG ---
-    # Strengere eis: vereist dat niet alleen een indicator afgaat, maar dat er ook een gezonde trend-ondersteuning is
-    is_long_trigger = (ind_15m['sfp_bullish'] or ind_15m['fvg_bullish'] or ind_15m['rsi'] < 35) and ind_1h['trend'] > -0.02
-    is_short_trigger = (ind_15m['sfp_bearish'] or ind_15m['fvg_bearish'] or ind_15m['rsi'] > 65) and ind_1h['trend'] < 0.02
+    # --- STRIKTE SNIPER LOGICA (Symmetrisch & Kwalitatief) ---
+    is_long_setup = (ind_15m['sfp_bullish'] or ind_15m['fvg_bullish'] or ind_15m['rsi'] < 30) and ind_15m['bos_bullish'] and ind_1h['trend'] > -0.01
+    is_short_setup = (ind_15m['sfp_bearish'] or ind_15m['fvg_bearish'] or ind_15m['rsi'] > 70) and ind_15m['bos_bearish'] and ind_1h['trend'] < 0.01
 
-    if is_long_trigger and not is_short_trigger:
+    if is_long_setup and not is_short_setup:
         signal = 'long'
         score = 75.0
         if ind_15m['sfp_bullish']: score += 8.0  
-        if ind_15m['fvg_bullish']: score += 8.0  
-        if ind_15m['bos_bullish']: score += 7.0  
-        if ind_15m['is_volume_spike']: score += 5.0
+        if ind_15m['fvg_bullish']: score += 7.0  
+        if ind_15m['bos_bullish']: score += 5.0  
+        if ind_15m['is_volume_spike']: score += 8.0
         if ind_15m['is_squeeze']: score += 5.0
 
-    # --- SYMMETRISCHE INSTITUTIONELE LOGICA VOOR SHORT ---
-    elif is_short_trigger and not is_long_trigger:
+    elif is_short_setup and not is_long_setup:
         signal = 'short'
         score = 75.0
         if ind_15m['sfp_bearish']: score += 8.0
-        if ind_15m['fvg_bearish']: score += 8.0
-        if ind_15m['bos_bearish']: score += 7.0
-        if ind_15m['is_volume_spike']: score += 5.0
+        if ind_15m['fvg_bearish']: score += 7.0
+        if ind_15m['bos_bearish']: score += 5.0
+        if ind_15m['is_volume_spike']: score += 8.0
         if ind_15m['is_squeeze']: score += 5.0
 
     score = min(float(score), 98.0)
 
-    # --- ADAPTIEF LEREN: BEPAAL FLEXIBILITEIT & EISEN ---
+    # --- HOGERE DREMPELS ---
     strictness_mode = 'strict'
-    min_score_required = 75.0
+    min_score_required = 85.0  
     
-    if ind_15m['volatility'] > 0.02:
+    if ind_15m['volatility'] > 0.025:
         strictness_mode = 'flexible'
-        min_score_required = 70.0
+        min_score_required = 80.0
     else:
         strictness_mode = 'strict'
-        min_score_required = 80.0
+        min_score_required = 85.0
 
-    # --- DYNAMISCHE LEVERAGE & TRAILING STOP ---
     leverage = 1
     trailing_mult = 1.5
 
-    if signal != 'none':
-        leverage = 15 if (score >= 85 and ind_15m['is_squeeze']) else (10 if score >= min_score_required else 5)
+    if signal != 'none' and score >= min_score_required:
+        leverage = 10 if (score >= 90 and ind_15m['is_squeeze']) else 5
         
         if ind_15m['is_squeeze']:
-            trailing_mult = 2.0  # Meer ademruimte tijdens breakout
-        elif score >= 90:
-            trailing_mult = 1.2  # Strakke bescherming
+            trailing_mult = 2.0  
+        elif score >= 92:
+            trailing_mult = 1.2  
         else:
             trailing_mult = 1.5
     else:
+        signal = 'none'
         score = 50.0
 
     return {
@@ -245,7 +241,6 @@ def push_state_to_github(filename, data):
             with open(filename, 'rb') as f:
                 existing_bytes = f.read()
             if existing_bytes == content_bytes:
-                print(f"ℹ️ State {filename} is niet veranderd; GitHub push overgeslagen.")
                 return
         except Exception:
             pass
@@ -254,7 +249,6 @@ def push_state_to_github(filename, data):
         f.write(content_bytes)
 
     if not token:
-        print(f"⚠️ Geen GITHUB_TOKEN gevonden; state {filename} lokaal bijgewerkt.")
         return
 
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
@@ -274,7 +268,7 @@ def push_state_to_github(filename, data):
         pass
 
     payload = {
-        "message": f"Auto-update Final Boss state {filename} [skip ci]",
+        "message": f"Auto-update Final Boss sniper state {filename} [skip ci]",
         "content": base64.b64encode(content_bytes).decode('ascii'),
         "branch": GITHUB_BRANCH
     }
@@ -291,7 +285,7 @@ def push_state_to_github(filename, data):
 
 
 def run_final_boss_scan():
-    print("--- [Final Boss Agent] Start Smart Money & Prijsactie evaluatie ---")
+    print("--- [Final Boss Sniper Agent] Start marktscan ---")
     try:
         exchange.load_markets()
     except Exception as e:
@@ -310,14 +304,13 @@ def run_final_boss_scan():
             analysis = analyze_advanced_patterns(df_15m, df_1h)
             filename = f'pattern_state_{asset.lower()}_15m.json'
             push_state_to_github(filename, analysis)
-            sm = analysis['smart_money']
-            print(f"👑 {asset} Final Boss: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']} | SFP={sm['liquidity_sweep_bullish'] or sm['liquidity_sweep_bearish']} | FVG={sm['fvg_bullish'] or sm['fvg_bearish']} | Lev={analysis['recommended_leverage']}x")
+            print(f"👑 {asset} Sniper: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']} (Min: {analysis['min_score_required']})")
         time.sleep(5.0)
 
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print("🚀 Final Boss Agent Web Service (Smart Money Edition) gestart.")
+    print("🚀 Final Boss Sniper Agent Web Service gestart.")
 
     while True:
         try:
