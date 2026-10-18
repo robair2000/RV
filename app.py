@@ -4,6 +4,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import ccxt
+import time
+import urllib.request
 
 # Pagina configuratie
 st.set_page_config(
@@ -17,10 +19,6 @@ st.markdown("*Real-time ML Meta-Labeling, S&R Confluence Gatekeeper & Live Excha
 
 # --- DYNAMISCHE ASSET SELECTIE UIT RANKING CSV ---
 def get_dashboard_trading_assets(top_n=5):
-    """
-    Combineert de vaste kern (BTC, ETH, LINK) met de dynamische Top N 
-    uit de V20 ranking CSV voor de dropdown in de Streamlit app.
-    """
     core_assets = ['BTC', 'ETH', 'LINK']
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_assets = []
@@ -37,7 +35,6 @@ def get_dashboard_trading_assets(top_n=5):
             pass
             
     combined = list(dict.fromkeys(core_assets + dynamic_assets))
-    # Maak een dictionary voor de selectbox (bijv. 'BTC (Kern)' of 'SOL (Scanner Top 5)')
     options = {}
     for asset in combined:
         label = f"{asset} (Kern)" if asset in core_assets else f"{asset} (Scanner Top {top_n})"
@@ -60,7 +57,6 @@ interval_code = interval_info['code']
 
 @st.cache_data(ttl=300)
 def load_dashboard_data(symbol, tf_info):
-    """Haalt de marktdata rechtstreeks op via KuCoin (CCXT) voor technische context."""
     try:
         exchange = ccxt.kucoin({
             'enableRateLimit': True,
@@ -85,7 +81,6 @@ def load_dashboard_data(symbol, tf_info):
         st.error(f"Fout bij ophalen KuCoin data: {e}")
         return None
 
-# Initialiseer CCXT Exchange voor live accountposities
 @st.cache_resource
 def get_exchange_client():
     return ccxt.kucoin({
@@ -98,180 +93,197 @@ def get_exchange_client():
 
 exchange = get_exchange_client()
 
-# --- LIVE KUCOIN POSITIES SECTIE ---
-st.markdown("### 💼 Live KuCoin Futures Posities (Handmatig & Automatisch)")
-try:
-    positions = exchange.fetch_positions()
-    active_positions = [p for p in positions if abs(float(p.get('contracts') or 0)) > 0]
-    
-    if active_positions:
-        pos_data = []
-        for p in active_positions:
-            sym = p.get('symbol')
-            side = str(p.get('side')).upper()
-            contracts = float(p.get('contracts', 0))
-            entry_price = float(p.get('entryPrice', 0))
-            mark_price = float(p.get('markPrice', 0))
-            pnl = float(p.get('unrealizedPnl', 0))
-            pnl_pct = float(p.get('percentage', 0)) if 'percentage' in p and p.get('percentage') is not None else 0.0
-            leverage = p.get('leverage', 1)
-            margin_mode = p.get('marginMode', 'cross')
-            
-            pos_data.append({
-                'Symbool': sym,
-                'Richting': side,
-                'Contracten': contracts,
-                'Entry Prijs ($)': round(entry_price, 4),
-                'Markt Prijs ($)': round(mark_price, 4),
-                'Hefboom': f"{leverage}x",
-                'Modus': margin_mode,
-                'Ongerealiseerde PnL ($)': round(pnl, 2),
-                'PnL (%)': f"{pnl_pct:+.2f}%"
-            })
+# --- MAAK TWEE TABS AAN ---
+tab1, tab2 = st.tabs(["🚀 Dashboard & Live Trades", "⚙️ Systeem & Worker Status"])
+
+with tab1:
+    # --- LIVE KUCOIN POSITIES SECTIE ---
+    st.markdown("### 💼 Live KuCoin Futures Posities (Handmatig & Automatisch)")
+    try:
+        positions = exchange.fetch_positions()
+        active_positions = [p for p in positions if abs(float(p.get('contracts') or 0)) > 0]
         
-        df_pos = pd.DataFrame(pos_data)
-        st.dataframe(df_pos, use_container_width=True)
-    else:
-        st.info("ℹ️ Geen actieve openstaande posities gevonden op je KuCoin Futures account op dit moment.")
-except Exception as e:
-    st.warning(f"⚠️ Kon live posities niet ophalen van KuCoin (Controleer je API-keys in de Render environment variables): {e}")
-
-st.markdown("---")
-
-# Haal live data op voor de geselecteerde asset
-symbol = f"{asset_code}/USDT"
-df = load_dashboard_data(symbol, interval_info)
-
-# State bestanden
-state_file = f"model_state_{asset_code.lower()}_{interval_code}.json"
-pattern_file = f"pattern_state_{asset_code.lower()}_4h.json"
-trader_status_file = "trader_status.json"
-
-if df is not None and not df.empty:
-    current_price = float(df['close'].iloc[-1])
-    
-    # --- LAAD V20 S&R & S&D PATTERN STATE ---
-    boss_state = {}
-    if os.path.exists(pattern_file):
-        try:
-            with open(pattern_file, 'r', encoding='utf-8') as f:
-                boss_state = json.load(f)
-        except Exception:
-            pass
-
-    if os.path.exists(state_file):
-        try:
-            with open(state_file, 'r', encoding='utf-8') as f:
-                state = json.load(f)
+        if active_positions:
+            pos_data = []
+            for p in active_positions:
+                sym = p.get('symbol')
+                side = str(p.get('side')).upper()
+                contracts = float(p.get('contracts', 0))
+                entry_price = float(p.get('entryPrice', 0))
+                mark_price = float(p.get('markPrice', 0))
+                pnl = float(p.get('unrealizedPnl', 0))
+                pnl_pct = float(p.get('percentage', 0)) if 'percentage' in p and p.get('percentage') is not None else 0.0
+                leverage = p.get('leverage', 1)
+                margin_mode = p.get('marginMode', 'cross')
+                
+                pos_data.append({
+                    'Symbool': sym,
+                    'Richting': side,
+                    'Contracten': contracts,
+                    'Entry Prijs ($)': round(entry_price, 4),
+                    'Markt Prijs ($)': round(mark_price, 4),
+                    'Hefboom': f"{leverage}x",
+                    'Modus': margin_mode,
+                    'Ongerealiseerde PnL ($)': round(pnl, 2),
+                    'PnL (%)': f"{pnl_pct:+.2f}%"
+                })
             
-            predicted_price = state.get('last_prediction')
-            prob = state.get('direction_probability', 50.0)
-            sl = state.get('stop_loss', 0.0)
-            tp = state.get('take_profit', 0.0)
-            regime = state.get('current_regime', 'trending')
-            
-            if predicted_price is not None:
-                signal = state.get('signal')
-                last_close = state.get('last_close') or current_price
-                pred_ret_pct = state.get('predicted_return_pct')
-                if pred_ret_pct is None:
-                    pred_ret_pct = (predicted_price - last_close) / last_close * 100
-                skill = state.get('baseline_error')
+            df_pos = pd.DataFrame(pos_data)
+            st.dataframe(df_pos, use_container_width=True)
+        else:
+            st.info("ℹ️ Geen actieve openstaande posities gevonden op je KuCoin Futures account op dit moment.")
+    except Exception as e:
+        st.warning(f"⚠️ Kon live posities niet ophalen van KuCoin (Controleer je API-keys in de Render environment variables): {e}")
 
-                boss_signal = boss_state.get('pattern_signal', 'none')
-                boss_score = boss_state.get('pattern_score', 50.0)
-                min_score_req = boss_state.get('min_score_required', 84.0)
-                strictness = boss_state.get('strictness_mode', 'v20_sr_sd_confluence')
-                rec_leverage = boss_state.get('recommended_leverage', 2)
+    st.markdown("---")
 
-                st.markdown(f"### 👑 V20 S&R Confluence & Model Status voor {asset_code}")
-                if boss_signal == signal and boss_score >= min_score_req:
-                    st.success(f"✅ **GOEDKEURING:** S&R Confluence Agent en Quant Model zijn in lijn ({signal.upper()}). Score: {boss_score} (Vereist: {min_score_req}).")
-                elif boss_signal != signal:
-                    st.warning(f"⚠️ **VETO (Richting):** S&R Agent ziet '{boss_signal.upper()}' terwijl Quant model '{signal.upper()}' aangeeft.")
+    # Haal live data op voor de geselecteerde asset
+    symbol = f"{asset_code}/USDT"
+    df = load_dashboard_data(symbol, interval_info)
+
+    # State bestanden
+    state_file = f"model_state_{asset_code.lower()}_{interval_code}.json"
+    pattern_file = f"pattern_state_{asset_code.lower()}_4h.json"
+
+    if df is not None and not df.empty:
+        current_price = float(df['close'].iloc[-1])
+        
+        boss_state = {}
+        if os.path.exists(pattern_file):
+            try:
+                with open(pattern_file, 'r', encoding='utf-8') as f:
+                    boss_state = json.load(f)
+            except Exception:
+                pass
+
+        if os.path.exists(state_file):
+            try:
+                with open(state_file, 'r', encoding='utf-8') as f:
+                    state = json.load(f)
+                
+                predicted_price = state.get('last_prediction')
+                prob = state.get('direction_probability', 50.0)
+                sl = state.get('stop_loss', 0.0)
+                tp = state.get('take_profit', 0.0)
+                regime = state.get('current_regime', 'trending')
+                
+                if predicted_price is not None:
+                    signal = state.get('signal')
+                    last_close = state.get('last_close') or current_price
+                    pred_ret_pct = state.get('predicted_return_pct')
+                    if pred_ret_pct is None:
+                        pred_ret_pct = (predicted_price - last_close) / last_close * 100
+                    skill = state.get('baseline_error')
+
+                    boss_signal = boss_state.get('pattern_signal', 'none')
+                    boss_score = boss_state.get('pattern_score', 50.0)
+                    min_score_req = boss_state.get('min_score_required', 84.0)
+                    strictness = boss_state.get('strictness_mode', 'v20_sr_sd_confluence')
+                    rec_leverage = boss_state.get('recommended_leverage', 2)
+
+                    st.markdown(f"### 👑 V20 S&R Confluence & Model Status voor {asset_code}")
+                    if boss_signal == signal and boss_score >= min_score_req:
+                        st.success(f"✅ **GOEDKEURING:** S&R Confluence Agent en Quant Model zijn in lijn ({signal.upper()}). Score: {boss_score} (Vereist: {min_score_req}).")
+                    elif boss_signal != signal:
+                        st.warning(f"⚠️ **VETO (Richting):** S&R Agent ziet '{boss_signal.upper()}' terwijl Quant model '{signal.upper()}' aangeeft.")
+                    else:
+                        st.info(f"⏸ **VETO (Score):** Signaal komt overeen, maar de score ({boss_score}) is te laag (vereist: {min_score_req}).")
+
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("Huidige Koers (KuCoin, live)", f"${current_price:,.2f}")
+                    col2.metric(f"Voorspelling volgende {interval_code}-candle", f"${predicted_price:,.2f}",
+                                delta=f"{pred_ret_pct:+.3f}% t.o.v. laatste close", delta_color="normal")
+                    col3.metric("RSI (14)", f"{df['RSI'].iloc[-1]:.1f}")
+                    col4.metric("V20 Confluence Score", f"{boss_score} / 100", delta=f"Min. vereist: {min_score_req}")
+
+                    col5, col6, col7, col8 = st.columns(4)
+                    col5.metric("Strategie Modus", strictness.replace('_', ' ').capitalize())
+                    col6.metric("Aanbevolen Hefboom", f"{rec_leverage}x")
+                    col7.metric("S&R Trend Richting", boss_signal.upper())
+                    col8.metric("Kans op stijging (Quant)", f"{prob:.1f}%")
+
+                    show_levels = signal in ('long', 'short')
+                    sl_txt = f"${sl:,.2f}" if (show_levels and sl > 0) else "N.v.t. (Geen signaal)"
+                    tp_txt = f"${tp:,.2f}" if (show_levels and tp > 0) else "N.v.t. (Geen signaal)"
+
+                    col9, col10, col11, col12 = st.columns(4)
+                    col9.metric("Model SL (2.5x ATR)", sl_txt)
+                    col10.metric("Model TP (5.0x ATR)", tp_txt)
+                    col11.metric("Marktregime", regime.capitalize())
+                    col12.metric("Skill (<1 = beter dan baseline)", f"{skill:.2f}" if isinstance(skill, (int, float)) else "n.v.t.")
+
                 else:
-                    st.info(f"⏸ **VETO (Score):** Signaal komt overeen, maar de score ({boss_score}) is te laag (vereist: {min_score_req}).")
-
-                # --- RIJ 1: Kernkoersen & Voorspelling ---
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Huidige Koers (KuCoin, live)", f"${current_price:,.2f}")
-                col2.metric(f"Voorspelling volgende {interval_code}-candle", f"${predicted_price:,.2f}",
-                            delta=f"{pred_ret_pct:+.3f}% t.o.v. laatste close", delta_color="normal")
-                col3.metric("RSI (14)", f"{df['RSI'].iloc[-1]:.1f}")
-                col4.metric("V20 Confluence Score", f"{boss_score} / 100", delta=f"Min. vereist: {min_score_req}")
-
-                # --- RIJ 2: Regimes & Hefboom ---
-                col5, col6, col7, col8 = st.columns(4)
-                col5.metric("Strategie Modus", strictness.replace('_', ' ').capitalize())
-                col6.metric("Aanbevolen Hefboom", f"{rec_leverage}x")
-                col7.metric("S&R Trend Richting", boss_signal.upper())
-                col8.metric("Kans op stijging (Quant)", f"{prob:.1f}%")
-
-                # --- RIJ 3: Stop-Loss, Take-Profit & Model Details ---
-                show_levels = signal in ('long', 'short')
-                sl_txt = f"${sl:,.2f}" if (show_levels and sl > 0) else "N.v.t. (Geen signaal)"
-                tp_txt = f"${tp:,.2f}" if (show_levels and tp > 0) else "N.v.t. (Geen signaal)"
-
-                col9, col10, col11, col12 = st.columns(4)
-                col9.metric("Model SL (2.5x ATR)", sl_txt)
-                col10.metric("Model TP (5.0x ATR)", tp_txt)
-                col11.metric("Marktregime", regime.capitalize())
-                col12.metric("Skill (<1 = beter dan baseline)", f"{skill:.2f}" if isinstance(skill, (int, float)) else "n.v.t.")
-
-                # --- LIVE TRADER WORKER STATUS SECTIE ---
+                    st.warning("Model state gevonden, maar nog geen voorspelling beschikbaar.")
+                    
                 st.markdown("---")
-                st.markdown("### 🤖 Actieve Trader Worker Bot Status")
-
-                if os.path.exists(trader_status_file):
-                    try:
-                        with open(trader_status_file, 'r', encoding='utf-8') as f:
-                            t_status = json.load(f)
-                        
-                        active_t = t_status.get('active_trades', {})
-                        if active_t:
-                            st.warning(f"🚨 **Bot Beheerde Trades / Limit Orders:** {len(active_t)} openstaand")
-                            for sym, t_data in active_t.items():
-                                c_a, c_b, c_c, c_d = st.columns(4)
-                                c_a.metric("Symbool & Richting", f"{sym} ({t_data.get('side').upper()})")
-                                c_b.metric("Limit Entry (Pullback)", f"${t_data.get('entry'):,.2f}")
-                                c_c.metric("Stop-Loss (Trigger)", f"${t_data.get('sl'):,.2f}")
-                                c_d.metric("Take-Profit (Trigger)", f"${t_data.get('tp'):,.2f}")
-                                
-                                is_be = t_data.get('breakeven_secured', False)
-                                if is_be:
-                                    st.success("🔒 **Breakeven Beveiliging:** Actief")
-                                else:
-                                    st.caption("ℹ️ Breakeven Beveiliging activeert zodra winst ≥ 2.4x ATR.")
-                        else:
-                            st.info("ℹ️ Geen actieve bot-trades of open zone-limit orders momenteel.")
-                    except Exception as e:
-                        st.error(f"Kon trader status niet laden: {e}")
-                else:
-                    st.info("ℹ️ Wacht op de eerste status-update van de `trader_worker`...")
-
-            else:
-                st.warning("Model state gevonden, maar nog geen voorspelling beschikbaar.")
                 
-            st.markdown("---")
-            
-            with st.expander("📊 Bekijk Model State, S&R Pattern JSON & Ensemble Gewichten"):
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.subheader("S&R & S&D Pattern State (JSON)")
-                    st.json(boss_state)
-                with col_b:
-                    st.subheader("Quant Model State (JSON)")
-                    st.json(state)
-                
-                st.subheader("Ensemble Model Gewichten (XGBoost / CatBoost / Random Forest)")
-                weights = state.get('model_weights', {})
-                if weights:
-                    df_weights = pd.DataFrame(list(weights.items()), columns=['Model', 'Gewicht'])
-                    st.bar_chart(df_weights.set_index('Model'))
-                
-        except Exception as e:
-            st.error(f"Fout bij het inlezen van state-bestanden: {e}")
+                with st.expander("📊 Bekijk Model State, S&R Pattern JSON & Ensemble Gewichten"):
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.subheader("S&R & S&D Pattern State (JSON)")
+                        st.json(boss_state)
+                    with col_b:
+                        st.subheader("Quant Model State (JSON)")
+                        st.json(state)
+                    
+                    st.subheader("Ensemble Model Gewichten (XGBoost / CatBoost / Random Forest)")
+                    weights = state.get('model_weights', {})
+                    if weights:
+                        df_weights = pd.DataFrame(list(weights.items()), columns=['Model', 'Gewicht'])
+                        st.bar_chart(df_weights.set_index('Model'))
+                    
+            except Exception as e:
+                st.error(f"Fout bij het inlezen van state-bestanden: {e}")
+        else:
+            st.warning(f"Model state-bestand `{state_file}` nog niet gevonden. Wacht op de eerste run van de quant_worker.")
     else:
-        st.warning(f"Model state-bestand `{state_file}` nog niet gevonden. Wacht op de eerste run van de quant_worker.")
-else:
-    st.error("Kon geen marktdata ophalen via KuCoin.")
+        st.error("Kon geen marktdata ophalen via KuCoin.")
+
+with tab2:
+    st.markdown("### ⚙️ Systeem Status & Worker Logs (GitHub & Bot Sync)")
+    
+    col_s1, col_s2 = st.columns(2)
+    
+    with col_s1:
+        st.markdown("#### 🤖 Trader Worker Status (`trader_status.json`)")
+        trader_status_file = "trader_status.json"
+        if os.path.exists(trader_status_file):
+            try:
+                with open(trader_status_file, 'r', encoding='utf-8') as f:
+                    t_status = json.load(f)
+                up_time = t_status.get('updated_at', 0)
+                if up_time > 0:
+                    time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(up_time))
+                    st.caption(f"Laatst bijgewerkt: {time_str}")
+                
+                active_t = t_status.get('active_trades', {})
+                if active_t:
+                    st.warning(f"🚨 **Bot Beheerde Trades / Limit Orders:** {len(active_t)} openstaand")
+                    st.json(active_t)
+                else:
+                    st.info("ℹ️ Geen actieve bot-trades of open zone-limit orders op dit moment.")
+                
+                cooldowns = t_status.get('cooldowns', {})
+                if cooldowns:
+                    st.markdown("**Actieve Cooldowns:**")
+                    st.json(cooldowns)
+            except Exception as e:
+                st.error(f"Kon trader status niet laden: {e}")
+        else:
+            st.info("⏳ Nog geen trader status bestand lokaal aanwezig. De `trader_worker` moet nog draaien.")
+
+    with col_s2:
+        st.markdown("#### 🏆 Markt Scanner Ranking (`kucoin_best_coins_ranking.csv`)")
+        ranking_file = 'kucoin_best_coins_ranking.csv'
+        if os.path.exists(ranking_file):
+            try:
+                df_ranking = pd.read_csv(ranking_file)
+                st.dataframe(df_ranking, use_container_width=True)
+            except Exception as e:
+                st.error(f"Fout bij inlezen ranking CSV: {e}")
+        else:
+            st.warning("⏳ Ranking CSV nog niet beschikbaar. Wacht op de marktscanner.")
+
+    st.markdown("---")
+    st.markdown("#### 🔄 Worker Synchronisatie & GitHub Status")
+    st.info("Alle workers (`quant_worker`, `agent`, `trader_worker`) synchroniseren hun modelstates en status via de GitHub repository (`robair2000/RV`). Controleer de Render logs van de afzonderlijke services voor gedetailleerde console-uitvoer.")
