@@ -72,8 +72,8 @@ def fetch_historical_candles(symbol, timeframe, limit=120):
 
 def analyze_advanced_patterns(df_15m, df_1h):
     """
-    De Final Boss analyse met Smart Money & Institutional Price Action:
-    Combineert FVG's, Liquidity Sweeps, BOS, Bollinger Squeezes en RSI momentum.
+    De Final Boss analyse met Smart Money & Institutional Price Action (Symmetrisch & Zuiver):
+    Combineert robuuste FVG's, Liquidity Sweeps, BOS, Bollinger Squeezes en RSI momentum.
     """
     if df_15m is None or len(df_15m) < 40 or df_1h is None or len(df_1h) < 40:
         return {
@@ -112,15 +112,23 @@ def analyze_advanced_patterns(df_15m, df_1h):
         vol_sma = volume.rolling(window=20).mean()
         is_volume_spike = float(volume.iloc[-1]) > float(vol_sma.iloc[-1]) * 1.4
 
-        # 4. Institutionele Price Action (Smart Money Concepts)
+        # 4. Institutionele Price Action (Symmetrisch & Aangescherpt SMC)
         recent = df.tail(30)
         r_highs = recent['high'].values
         r_lows = recent['low'].values
         r_closes = recent['close'].values
+        r_opens = recent['open'].values
 
-        # Fair Value Gaps (FVG)
-        fvg_bullish = any(r_lows[i+2] > r_highs[i] for i in range(len(recent) - 2))
-        fvg_bearish = any(r_highs[i+2] < r_lows[i] for i in range(len(recent) - 2))
+        # Fair Value Gaps (FVG) - Strikte disbalans check met body/wick spreiding
+        fvg_bullish = False
+        fvg_bearish = False
+        for i in range(len(recent) - 2):
+            # Bullish FVG: gat tussen low van candle i+2 en high van candle i, met duidelijke opwaartse impuls
+            if r_lows[i+2] > r_highs[i] and (r_closes[i+1] > r_opens[i+1]):
+                fvg_bullish = True
+            # Bearish FVG: gat tussen high van candle i+2 en low van candle i, met duidelijke neerwaartse impuls
+            if r_highs[i+2] < r_lows[i] and (r_closes[i+1] < r_opens[i+1]):
+                fvg_bearish = True
 
         # Liquidity Sweep / Stop Hunt (SFP)
         prev_high = r_highs[:-1].max()
@@ -152,23 +160,27 @@ def analyze_advanced_patterns(df_15m, df_1h):
     score = 50.0
     signal = 'none'
 
-    # --- INSTITUTIONELE LOGICA VOOR LONG ---
-    if (ind_15m['sfp_bullish'] or ind_15m['fvg_bullish'] or ind_15m['rsi'] < 38) and ind_1h['trend'] > -0.015:
+    # --- SYMMETRISCHE INSTITUTIONELE LOGICA VOOR LONG ---
+    # Strengere eis: vereist dat niet alleen een indicator afgaat, maar dat er ook een gezonde trend-ondersteuning is
+    is_long_trigger = (ind_15m['sfp_bullish'] or ind_15m['fvg_bullish'] or ind_15m['rsi'] < 35) and ind_1h['trend'] > -0.02
+    is_short_trigger = (ind_15m['sfp_bearish'] or ind_15m['fvg_bearish'] or ind_15m['rsi'] > 65) and ind_1h['trend'] < 0.02
+
+    if is_long_trigger and not is_short_trigger:
         signal = 'long'
         score = 75.0
-        if ind_15m['sfp_bullish']: score += 10.0  # Stop hunt succesvol afgerond
-        if ind_15m['fvg_bullish']: score += 10.0  # Disbalans opgevuld
-        if ind_15m['bos_bullish']: score += 10.0  # Structuur breekt omhoog
+        if ind_15m['sfp_bullish']: score += 8.0  
+        if ind_15m['fvg_bullish']: score += 8.0  
+        if ind_15m['bos_bullish']: score += 7.0  
         if ind_15m['is_volume_spike']: score += 5.0
         if ind_15m['is_squeeze']: score += 5.0
 
-    # --- INSTITUTIONELE LOGICA VOOR SHORT ---
-    elif (ind_15m['sfp_bearish'] or ind_15m['fvg_bearish'] or ind_15m['rsi'] > 62) and ind_1h['trend'] < 0.015:
+    # --- SYMMETRISCHE INSTITUTIONELE LOGICA VOOR SHORT ---
+    elif is_short_trigger and not is_long_trigger:
         signal = 'short'
         score = 75.0
-        if ind_15m['sfp_bearish']: score += 10.0
-        if ind_15m['fvg_bearish']: score += 10.0
-        if ind_15m['bos_bearish']: score += 10.0
+        if ind_15m['sfp_bearish']: score += 8.0
+        if ind_15m['fvg_bearish']: score += 8.0
+        if ind_15m['bos_bearish']: score += 7.0
         if ind_15m['is_volume_spike']: score += 5.0
         if ind_15m['is_squeeze']: score += 5.0
 
