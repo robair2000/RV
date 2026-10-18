@@ -14,9 +14,40 @@ import pandas as pd
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
+        if self.path == '/' or self.path == '/ranking':
+            self.send_response(200)
+            self.send_header("Content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            
+            html = "<html><head><title>V20 Trader - Live Ranking</title></head><body style='font-family: Arial; padding: 20px; background-color: #f4f4f9;'>"
+            html += "<h2 style='color: #333;'>🏆 V20 Live Kucoin Coins Ranking (Trader Dashboard)</h2>"
+            
+            ranking_file = 'kucoin_best_coins_ranking.csv'
+            if os.path.exists(ranking_file):
+                try:
+                    df = pd.read_csv(ranking_file)
+                    # Zet om naar HTML tabel met wat basisstijl
+                    html += df.to_html(index=False, classes='table', border=1)
+                    # Voeg wat simpele CSS toe voor de leesbaarheid
+                    html += """
+                    <style>
+                        table.table { border-collapse: collapse; width: 100%; background: white; margin-top: 15px; }
+                        table.table th, table.table td { padding: 10px 15px; text-align: left; border-bottom: 1px solid #ddd; }
+                        table.table th { background-color: #4CAF50; color: white; }
+                        table.table tr:hover { background-color: #f1f1f1; }
+                    </style>
+                    """
+                except Exception as e:
+                    html += f"<p style='color: red;'>⚠️ Fout bij lezen van CSV: {e}</p>"
+            else:
+                html += "<p style='color: orange;'>⏳ Nog geen ranking CSV gevonden. De scanner moet nog draaien.</p>"
+                
+            html += "</body></html>"
+            self.wfile.write(html.encode("utf-8"))
+        else:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
 
     def do_HEAD(self):
         self.send_response(200)
