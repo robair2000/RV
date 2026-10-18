@@ -1,0 +1,78 @@
+{
+    "learning_rate": 0.05,
+    "lookback_window": 120,
+    "current_regime": "trending",
+    "regime_features": {
+        "trending": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ],
+        "sideways": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ]
+    },
+    "active_features": [
+        "return_1",
+        "dist_sma20",
+        "dist_sma50",
+        "RSI",
+        "atr_ratio",
+        "bb_position",
+        "ADX",
+        "MACD_hist",
+        "OBV_slope",
+        "VWAP_dist",
+        "dist_support",
+        "dist_resistance"
+    ],
+    "last_trained_timestamp": 1792357297.5556376,
+    "model_weights": {
+        "xgb": 0.3340535951970259,
+        "cat": 0.3384721426404872,
+        "rf": 0.32747426216248704
+    },
+    "model_errors": {
+        "xgb": null,
+        "cat": null,
+        "rf": null
+    },
+    "baseline_error": 1.2705330326371538,
+    "last_prediction": 0.11482242693631034,
+    "last_prediction_price": 0.11482242693631034,
+    "predicted_return_pct": -0.0414146980844928,
+    "direction_probability": 37.867183685302734,
+    "signal": "short",
+    "signal_probability": 62.132816314697266,
+    "holdout_direction_accuracy": 0.4,
+    "holdout_classifier_accuracy": null,
+    "holdout_samples": 0,
+    "atr": 0.00424357142857143,
+    "atr_pct": 3.6942382071658653,
+    "last_close": 0.11487,
+    "last_candle_ts": 0,
+    "data_status": "ok",
+    "stop_loss": 0.12547892857142856,
+    "take_profit": 0.09365214285714285,
+    "updated_at": 1792357297
+}
