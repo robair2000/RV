@@ -64,7 +64,7 @@ def push_file_to_github(filename):
 
 # --- STAP 1: DYNAMISCHE ASSET SELECTIE (Kern + Scanner Top 5) ---
 def get_combined_trading_symbols(top_n=5):
-    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'LINK/USDT:USDT']
+    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_symbols = []
     
