@@ -19,7 +19,7 @@ st.markdown("*Real-time ML Meta-Labeling, S&R Confluence Gatekeeper & Live Excha
 
 # --- DYNAMISCHE ASSET SELECTIE UIT RANKING CSV ---
 def get_dashboard_trading_assets(top_n=5):
-    core_assets = ['BTC', 'ETH', 'LINK']
+    core_assets = ['BTC', 'ETH', 'SOL', 'AVAX', 'LINK']
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_assets = []
     
