@@ -41,7 +41,34 @@ def run_server():
 
 
 # --- CONFIGURATIE V20 S&R & SUPPLY/DEMAND AGENT ---
-ASSETS = ['BTC', 'ETH', 'LINK', 'SOL', 'AVAX']
+def get_combined_trading_assets(top_n=5):
+    """
+    Combineert altijd de vaste kern (BTC, ETH, LINK) met de 
+    dynamische Top N uit de V20 ranking scanner (kucoin_best_coins_ranking.csv).
+    """
+    core_assets = ['BTC', 'ETH', 'LINK']
+    ranking_file = 'kucoin_best_coins_ranking.csv'
+    dynamic_assets = []
+    
+    if os.path.exists(ranking_file):
+        try:
+            df = pd.read_csv(ranking_file)
+            symbols = df['Symbol'].head(top_n).tolist()
+            for s in symbols:
+                asset_name = s.split('/')[0].split(':')[0]
+                if asset_name not in dynamic_assets:
+                    dynamic_assets.append(asset_name)
+            print(f"📈 Dynamische top {top_n} ingeladen voor agent: {dynamic_assets}")
+        except Exception as e:
+            print(f"⚠️ Fout bij lezen van ranking CSV in agent: {e}")
+            
+    combined = list(dict.fromkeys(core_assets + dynamic_assets))
+    print(f"🎯 Actieve agent trading scope ({len(combined)} assets): {combined}")
+    return combined
+
+# Haal de actieve assets op bij start
+ASSETS = get_combined_trading_assets(top_n=5)
+
 TIMEFRAMES = {'4h': '4h', '1d': '1d'}
 CHECK_INTERVAL_SECONDS = 1800
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
