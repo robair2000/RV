@@ -62,21 +62,8 @@ def push_file_to_github(filename):
     except Exception as e:
         print(f"❌ Push van {filename} mislukt: {e}")
 
-# --- STAP 1: AUTOMATISCH UITVOEREN VAN GETCOINS.PY & PUSH NAAR GITHUB ---
-try:
-    print("🔄 Start automatische marktscan via getcoins.py...")
-    subprocess.run(["python", "getcoins.py"], check=True)
-    print("✅ Marktscan succesvol voltooid. CSV is bijgewerkt.")
-    push_file_to_github('kucoin_best_coins_ranking.csv')
-except Exception as e:
-    print(f"⚠️ Kon getcoins.py niet uitvoeren of pushen: {e}. We gebruiken de bestaande CSV indien aanwezig.")
-
-# --- STAP 2: DYNAMISCHE ASSET SELECTIE (Kern + Scanner Top 5) ---
+# --- STAP 1: DYNAMISCHE ASSET SELECTIE (Kern + Scanner Top 5) ---
 def get_combined_trading_symbols(top_n=5):
-    """
-    Combineert altijd de vaste kern met de dynamische Top N uit de ranking CSV,
-    waarbij we direct de correcte volledige futures symbolen behouden.
-    """
     core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_symbols = []
@@ -97,9 +84,6 @@ def get_combined_trading_symbols(top_n=5):
     print(f"🎯 Definitieve actieve trading scope ({len(combined)} symbols): {combined}")
     return combined
 
-# Haal direct bij start de actieve symbolen op
-symbols_scope = get_combined_trading_symbols(top_n=5)
-
 timeframes = {
     '4h': {'interval': '4h', 'limit': 500, 'min_interval_seconds': 3 * 3600},
     '1d': {'interval': '1d', 'limit': 365, 'min_interval_seconds': 23 * 3600},
@@ -109,12 +93,6 @@ base_features = [
     'return_1', 'dist_sma20', 'dist_sma50', 'RSI', 'atr_ratio', 
     'bb_position', 'ADX', 'MACD_hist', 'OBV_slope', 'VWAP_dist',
     'dist_support', 'dist_resistance'
-]
-
-optional_features = [
-    'CMF', 'ATR_percentile', 'regime_score', 'smc_zone_dist',
-    'lorentzian_dist', 'funding_rate', 'oi_change', 'oi_ratio',
-    'bid_ask_imbalance', 'book_pressure', 'taker_buy_ratio', 'btc_trend_gap'
 ]
 
 MODEL_NAMES = ['xgb', 'cat', 'rf']
@@ -127,6 +105,7 @@ MIN_FEATURE_ROWS = 60
 SL_ATR_MULT = 2.5
 TP_ATR_MULT = 5.0
 
+# Strenge initialisatie als lineaire swap exchange
 exchange = ccxt.kucoin({
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'}
@@ -149,12 +128,7 @@ def fetch_market_context_from_exchange(exch, symbol):
         if fr and 'fundingRate' in fr:
             funding = float(fr['fundingRate'])
     except Exception:
-        try:
-            fr = exch.fetch_funding_rate(symbol)
-            if fr and 'fundingRate' in fr:
-                funding = float(fr['fundingRate'])
-        except Exception:
-            pass
+        pass
 
     try:
         oi = exch.fetch_open_interest(swap_symbol)
@@ -312,9 +286,6 @@ def compute_features(df):
     rolling_max = high.rolling(window=50, min_periods=10).max()
     df['dist_support'] = (close - rolling_min) / (df['ATR'] + 1e-8)
     df['dist_resistance'] = (rolling_max - close) / (df['ATR'] + 1e-8)
-
-    df['ATR_percentile'] = df['ATR'].rolling(window=100).apply(lambda x: (x <= x[-1]).mean(), raw=True)
-    df['regime_score'] = (df['ADX'] / 100.0) * (1.0 - df['atr_ratio'] / (df['atr_ratio'].rolling(20).mean() + 1e-8))
 
     return df.replace([np.inf, -np.inf], np.nan)
 
@@ -577,9 +548,20 @@ def push_to_github(files):
 
 
 def main():
+    # 1. Voer eerst automatisch de marktscanner uit
+    try:
+        print("🔄 Start automatische marktscan via getcoins.py...")
+        subprocess.run(["python", "getcoins.py"], check=True)
+        print("✅ Marktscan succesvol voltooid. CSV is bijgewerkt.")
+        push_file_to_github('kucoin_best_coins_ranking.csv')
+    except Exception as e:
+        print(f"⚠️ Kon getcoins.py niet uitvoeren of pushen: {e}. We gebruiken de bestaande CSV indien aanwezig.")
+
+    # 2. Haal de actieve symbolen op uit de verse ranking
+    symbols_scope = get_combined_trading_symbols(top_n=5)
+
     written = []
     for symbol in symbols_scope:
-        # Haal de korte asset naam eruit voor de filenaam (bijv. BTC uit BTC/USDT:USDT)
         asset = symbol.split('/')[0].split(':')[0]
         
         for tf_name, tf_info in timeframes.items():
