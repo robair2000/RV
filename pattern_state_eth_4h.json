@@ -4,9 +4,9 @@
   "recommended_leverage": 1,
   "recommended_trailing_mult": 2.5,
   "min_score_required": 85.0,
-  "strictness_mode": "macro_swing",
+  "strictness_mode": "macro_swing_strict_shorts",
   "rsi_4h": 34.84,
-  "rsi_1d": 25.28,
+  "rsi_1d": 24.78,
   "volume_expansion": false,
-  "updated_at": 1792317723.4689043
+  "updated_at": 1792320673.8124034
 }
