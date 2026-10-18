@@ -193,17 +193,31 @@ def manage_open_positions_and_trailing_stops():
                 'sl': entry - sgn * trail_mult * atr,
                 'tp': entry + sgn * tp_mult * atr,
                 'trailing_mult': trail_mult,
+                'breakeven_secured': False,
             }
 
         atr = trade['atr']
         trail_mult = trade.get('trailing_mult', 2.5)
-        current_pnl_pct = pnl_fraction(side, entry, price)
+        sgn = 1 if side == 'long' else -1
         
+        # Bereken hoeveel ATR's we in de plus staan
+        distance_in_atr = sgn * (price - entry) / atr if atr > 0 else 0.0
+
+        # PROFESSIONELE OPTIMALISATIE: Vanaf 2.0x ATR winst direct naar Breakeven en strakke trailing!
+        if distance_in_atr >= 2.0 and not trade.get('breakeven_secured', False):
+            if side == 'long' and trade['sl'] < entry:
+                trade['sl'] = entry
+                trade['breakeven_secured'] = True
+            elif side == 'short' and trade['sl'] > entry:
+                trade['sl'] = entry
+                trade['breakeven_secured'] = True
+
         if side == 'long':
             if price > trade['peak']:
                 trade['peak'] = price
-                if current_pnl_pct >= 0.03:  # Pas bij 3% winst trailing activeren voor swings
-                    new_sl = price - trail_mult * atr
+                if distance_in_atr >= 2.0:
+                    # Activeer strakkere trailing stop om winst vast te houden
+                    new_sl = price - (trail_mult * 0.8) * atr
                     if new_sl > trade['sl']:
                         trade['sl'] = new_sl
             stop_hit = price <= trade['sl']
@@ -211,8 +225,8 @@ def manage_open_positions_and_trailing_stops():
         else:
             if price < trade['peak']:
                 trade['peak'] = price
-                if current_pnl_pct >= 0.03:
-                    new_sl = price + trail_mult * atr
+                if distance_in_atr >= 2.0:
+                    new_sl = price + (trail_mult * 0.8) * atr
                     if new_sl < trade['sl']:
                         trade['sl'] = new_sl
             stop_hit = price >= trade['sl']
@@ -338,6 +352,7 @@ def evaluate_and_trade(asset, symbol):
             'entry': price, 'peak': price, 'atr': atr,
             'sl': stop_loss_val, 'tp': take_profit_val,
             'trailing_mult': boss_trailing_mult,
+            'breakeven_secured': False,
         }
     except Exception:
         pass
