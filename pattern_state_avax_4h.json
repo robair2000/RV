@@ -3,9 +3,9 @@
   "pattern_signal": "long",
   "recommended_leverage": 3,
   "recommended_trailing_mult": 2.5,
-  "min_score_required": 84.0,
+  "min_score_required": 75.0,
   "strictness_mode": "v20_sr_sd_confluence",
   "atr_pct": 2.55,
   "adx_4h": 45.74,
-  "updated_at": 1792359953.1220624
+  "updated_at": 1792360154.745113
 }
