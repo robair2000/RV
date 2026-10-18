@@ -293,12 +293,17 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
 
     if signal != 'none':
         meta_prob = train_meta_classifier(df_4h)
-        score += (meta_prob * 15.0)
+        
+        # CORRECTIE VOOR SHORTS: Gebruik 1 - meta_prob zodat een hoge kans op daling wordt beloond
+        effective_prob = meta_prob if signal == 'long' else (1.0 - meta_prob)
+        
+        score += (effective_prob * 15.0)
         
         threshold_map = {'BTC': 0.46, 'ETH': 0.46, 'LINK': 0.40, 'SOL': 0.40, 'AVAX': 0.40}
         min_prob = threshold_map.get(asset.upper(), 0.40)
 
-        if meta_prob < min_prob:
+        # Evaluatie op basis van de gecorrigeerde effectieve kans
+        if effective_prob < min_prob:
             signal = 'none'
             score = 50.0
 
