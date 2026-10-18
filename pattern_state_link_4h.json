@@ -6,7 +6,7 @@
   "min_score_required": 85.0,
   "strictness_mode": "macro_swing_strict_shorts",
   "rsi_4h": 39.36,
-  "rsi_1d": 23.51,
+  "rsi_1d": 23.1,
   "volume_expansion": false,
-  "updated_at": 1792329846.8636277
+  "updated_at": 1792331680.6212513
 }
