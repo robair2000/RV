@@ -26,9 +26,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             if os.path.exists(ranking_file):
                 try:
                     df = pd.read_csv(ranking_file)
-                    # Zet om naar HTML tabel met wat basisstijl
                     html += df.to_html(index=False, classes='table', border=1)
-                    # Voeg wat simpele CSS toe voor de leesbaarheid
                     html += """
                     <style>
                         table.table { border-collapse: collapse; width: 100%; background: white; margin-top: 15px; }
@@ -62,6 +60,28 @@ def run_server():
     HTTPServer(("0.0.0.0", port), HealthCheckHandler).serve_forever()
 
 
+GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
+GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
+
+def pull_ranking_from_github():
+    """Haalt de meest recente ranking CSV op van GitHub zodat alle workers synchroon lopen."""
+    filename = 'kucoin_best_coins_ranking.csv'
+    token = os.environ.get('GITHUB_TOKEN', '')
+    url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
+    headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'trader-worker'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            with open(filename + '.tmp', 'wb') as f:
+                f.write(resp.read())
+        os.replace(filename + '.tmp', filename)
+        print("📥 Verse ranking CSV succesvol opgehaald van GitHub voor trader.")
+    except Exception as e:
+        print(f"⚠️ Kon ranking CSV niet ophalen van GitHub voor trader ({e}), we gebruiken lokale versie.")
+
+
 # --- CONFIGURATIE FUTURES SWING TRADING (V20 ZONE-BASED LIMITS) ---
 def get_combined_trading_assets(top_n=5):
     """
@@ -88,8 +108,6 @@ def get_combined_trading_assets(top_n=5):
     print(f"🎯 Actieve trader trading scope ({len(combined)} assets): {combined}")
     return combined
 
-# Haal de actieve assets op bij start
-ASSETS = get_combined_trading_assets(top_n=5)
 
 TIMEFRAMES = ['4h', '1d']
 TRADE_CHECK_INTERVAL_SECONDS = 3600
@@ -116,9 +134,6 @@ TP_ATR_mult_BASE = 5.0
 
 MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 84.0))
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
-
-GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
-GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
 active_trades = {}
 symbol_cooldowns = {}
@@ -192,10 +207,10 @@ def push_trader_status_to_github():
         pass
 
 
-def pull_latest_states_from_github():
+def pull_latest_states_from_github(assets):
     token = os.environ.get('GITHUB_TOKEN', '')
     files_to_pull = []
-    for asset in ASSETS:
+    for asset in assets:
         for tf in TIMEFRAMES:
             files_to_pull.append(f'model_state_{asset.lower()}_{tf}.json')
             files_to_pull.append(f'pattern_state_{asset.lower()}_4h.json')
@@ -263,7 +278,7 @@ def pnl_fraction(side, entry, price):
     return move if side == 'long' else -move
 
 
-def manage_open_positions_and_trailing_stops():
+def manage_open_positions_and_trailing_stops(assets):
     try:
         positions = execute_with_retry(lambda: exchange.fetch_positions())
     except Exception:
@@ -390,8 +405,8 @@ def resolve_symbol(asset):
     return fallback if fallback in exchange.markets else None
 
 
-def execute_live_trades_scan():
-    pull_latest_states_from_github()
+def execute_live_trades_scan(assets):
+    pull_latest_states_from_github(assets)
     try:
         exchange.load_markets()
         positions = execute_with_retry(lambda: exchange.fetch_positions())
@@ -406,7 +421,7 @@ def execute_live_trades_scan():
     if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
         return
 
-    for asset in ASSETS:
+    for asset in assets:
         symbol = resolve_symbol(asset)
         if not symbol or symbol in active_symbols or symbol in symbol_cooldowns:
             continue
@@ -490,8 +505,12 @@ if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
     while True:
         try:
-            manage_open_positions_and_trailing_stops()
-            execute_live_trades_scan()
-        except Exception:
-            pass
+            # Haal vóór elke cyclus de verse ranking op van GitHub
+            pull_ranking_from_github()
+            current_assets = get_combined_trading_assets(top_n=5)
+
+            manage_open_positions_and_trailing_stops(current_assets)
+            execute_live_trades_scan(current_assets)
+        except Exception as e:
+            print(f"Fout in trader lus: {e}")
         time.sleep(60)
