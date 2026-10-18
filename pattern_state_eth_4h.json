@@ -5,8 +5,8 @@
   "recommended_trailing_mult": 2.5,
   "min_score_required": 85.0,
   "strictness_mode": "macro_swing_strict_shorts",
-  "rsi_4h": 34.84,
-  "rsi_1d": 24.26,
+  "rsi_4h": 36.05,
+  "rsi_1d": 24.4,
   "volume_expansion": false,
-  "updated_at": 1792324340.807319
+  "updated_at": 1792326174.6956897
 }
