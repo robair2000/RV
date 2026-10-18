@@ -10,7 +10,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import ccxt
 
 
-# --- RENDER WEB SERVER (VOOR POORT-BINDING & HEALTH CHECKS) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -30,41 +29,32 @@ def run_server():
     HTTPServer(("0.0.0.0", port), HealthCheckHandler).serve_forever()
 
 
-# --- CONFIGURATIE FUTURES LIVE TRADING ---
+# --- CONFIGURATIE FUTURES SWING TRADING (4h & 1d) ---
 ASSETS = ['BTC', 'ETH', 'LINK']
-TIMEFRAMES = ['15m', '1h']
-TRADE_CHECK_INTERVAL_SECONDS = 900    # Elke 15 minuten nieuwe trades zoeken
-POSITION_CHECK_INTERVAL_SECONDS = 60  # Elke minuut open posities controleren
+TIMEFRAMES = ['4h', '1d']
+TRADE_CHECK_INTERVAL_SECONDS = 3600   # Elk uur controleren op nieuwe swing setups
+POSITION_CHECK_INTERVAL_SECONDS = 120 # Elke 2 minuten posities controleren
 
-TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))   # margin per trade
+TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
-# Risico & portfolio grenzen
-MAX_CONCURRENT_POSITIONS = 2  # Bescherming tegen over-exposure
+MAX_CONCURRENT_POSITIONS = 2
 
-# Basis & risico drempels
 MIN_DIRECTION_PROBABILITY = float(os.environ.get('MIN_DIRECTION_PROBABILITY', 65.0))
-MIN_PREDICTED_RETURN_PCT = float(os.environ.get('MIN_PREDICTED_RETURN_PCT', 0.15))
-MIN_HOLDOUT_ACCURACY = float(os.environ.get('MIN_HOLDOUT_ACCURACY', 0.55))
-MIN_RRR = 1.40
-MIN_ATR_PCT = 0.25
-MAX_ATR_PCT = 5.5
-MAX_FUNDING_RATE = 0.0005
-COOLDOWN_SECONDS = 3600
+MIN_PREDICTED_RETURN_PCT = float(os.environ.get('MIN_PREDICTED_RETURN_PCT', 0.25))
+MIN_HOLDOUT_ACCURACY = float(os.environ.get('MIN_HOLDOUT_ACCURACY', 0.52))
+MIN_RRR = 2.0  # Hogere RRR vereist voor swing trades
+MIN_ATR_PCT = 0.5
+MAX_ATR_PCT = 8.0
+COOLDOWN_SECONDS = 7200
 
-TP_ATR_mult_BASE = 2.5
+TP_ATR_mult_BASE = 4.0
 MAX_NOTIONAL_OVERSHOOT = 1.5
 MIN_SCORE = 2
 
-MAX_STATE_AGE_SECONDS = {'15m': 40 * 60, '1h': 2 * 3600 + 30 * 60}
-MIN_ORDERBOOK_IMBALANCE = 0.55
-
-PAUSE_BETWEEN_ASSETS = float(os.environ.get('PAUSE_BETWEEN_ASSETS', 4.0))
-PAUSE_AFTER_CALL = float(os.environ.get('PAUSE_AFTER_CALL', 1.0))
-PAUSE_RETRY = 1.0
-ENABLE_BTC_CORRELATION = True
+MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
@@ -83,9 +73,6 @@ exchange = getattr(ccxt, EXCHANGE_ID)({
 })
 
 
-# =====================================================================
-# HULPFUNCTIE: RETRY LOGICA MET BACKOFF
-# =====================================================================
 def execute_with_retry(func, retries=3, delay=2):
     for attempt in range(retries):
         try:
@@ -93,24 +80,19 @@ def execute_with_retry(func, retries=3, delay=2):
         except Exception as e:
             if attempt == retries - 1:
                 raise e
-            print(f"⚠️ Exchange actie mislukt ({e}), poging {attempt + 1} van {retries} over {delay}s...")
             time.sleep(delay)
             delay *= 2
 
 
-# =====================================================================
-# STATE LADEN VANAF GITHUB
-# =====================================================================
 def pull_latest_states_from_github():
     token = os.environ.get('GITHUB_TOKEN', '')
-    failed = 0
     files_to_pull = []
     for asset in ASSETS:
         for tf in TIMEFRAMES:
             files_to_pull.append(f'model_state_{asset.lower()}_{tf}.json')
-            files_to_pull.append(f'pattern_state_{asset.lower()}_{tf}.json')
+            files_to_pull.append(f'pattern_state_{asset.lower()}_4h.json')
 
-    for filename in files_to_pull:
+    for filename in set(files_to_pull):
         url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
         headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'trader-worker'}
         if token:
@@ -118,15 +100,11 @@ def pull_latest_states_from_github():
         try:
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=15) as resp:
-                content = resp.read()
-            tmp = filename + '.tmp'
-            with open(tmp, 'wb') as f:
-                f.write(content)
-            os.replace(tmp, filename)
+                with open(filename + '.tmp', 'wb') as f:
+                    f.write(resp.read())
+            os.replace(filename + '.tmp', filename)
         except Exception:
-            failed += 1
-    if failed < len(files_to_pull):
-        print("🔄 Quant states & Final Boss states opgehaald van GitHub.")
+            pass
 
 
 def load_state(asset, tf):
@@ -140,14 +118,13 @@ def load_state(asset, tf):
         return None
     if st.get('data_status') != 'ok' or st.get('signal') not in ('long', 'short', 'none'):
         return None
-    age = time.time() - float(st.get('updated_at', 0) or 0)
-    if age > MAX_STATE_AGE_SECONDS.get(tf, 3600):
+    if time.time() - float(st.get('updated_at', 0) or 0) > MAX_STATE_AGE_SECONDS.get(tf, 86400):
         return None
     return st
 
 
-def load_pattern_state(asset, tf='15m'):
-    path = f'pattern_state_{asset.lower()}_{tf}.json'
+def load_pattern_state(asset):
+    path = f'pattern_state_{asset.lower()}_4h.json'
     if not os.path.exists(path):
         return None
     try:
@@ -157,23 +134,17 @@ def load_pattern_state(asset, tf='15m'):
         return None
 
 
-# =====================================================================
-# ORDERS & POSITIES
-# =====================================================================
 def close_position(symbol, side, contracts):
     close_side = 'sell' if side == 'long' else 'buy'
     if DRY_RUN:
-        print(f"[DRY_RUN] Zou {symbol} sluiten ({close_side} {contracts})")
         return True
     try:
-        order = execute_with_retry(lambda: exchange.create_order(
+        execute_with_retry(lambda: exchange.create_order(
             symbol, 'market', close_side, contracts, None,
             {'reduceOnly': True, 'marginMode': DESIRED_MARGIN_MODE}
         ))
-        print(f"✅ Positie {symbol} gesloten: {order.get('id') if isinstance(order, dict) else order}")
         return True
-    except Exception as e:
-        print(f"⛔ Fout bij sluiten {side} {symbol}: {repr(e)}")
+    except Exception:
         return False
 
 
@@ -187,8 +158,7 @@ def pnl_fraction(side, entry, price):
 def manage_open_positions_and_trailing_stops():
     try:
         positions = execute_with_retry(lambda: exchange.fetch_positions())
-    except Exception as e:
-        print(f"Fout bij ophalen open posities: {e}")
+    except Exception:
         return
 
     open_symbols = set()
@@ -211,16 +181,13 @@ def manage_open_positions_and_trailing_stops():
         trade = active_trades.get(symbol)
         if trade is None:
             base = symbol.split('/')[0]
-            st = load_state(base, '15m')
-            pst = load_pattern_state(base, '15m')
-            trail_mult = float(pst.get('recommended_trailing_mult', 1.5)) if pst else 1.5
+            st = load_state(base, '4h')
+            pst = load_pattern_state(base)
+            trail_mult = float(pst.get('recommended_trailing_mult', 2.5)) if pst else 2.5
 
-            if st and st.get('atr_pct'):
-                atr = entry * float(st['atr_pct']) / 100.0
-            else:
-                atr = entry * 0.015
+            atr = entry * float(st['atr_pct']) / 100.0 if (st and st.get('atr_pct')) else entry * 0.02
             sgn = 1 if side == 'long' else -1
-            tp_mult = max(TP_ATR_mult_BASE, trail_mult * (MIN_RRR + 0.1))
+            tp_mult = max(TP_ATR_mult_BASE, trail_mult * (MIN_RRR + 0.2))
             trade = active_trades[symbol] = {
                 'side': side, 'entry': entry, 'peak': price, 'atr': atr,
                 'sl': entry - sgn * trail_mult * atr,
@@ -229,81 +196,44 @@ def manage_open_positions_and_trailing_stops():
             }
 
         atr = trade['atr']
-        trail_mult = trade.get('trailing_mult', 1.5)
+        trail_mult = trade.get('trailing_mult', 2.5)
         current_pnl_pct = pnl_fraction(side, entry, price)
         
         if side == 'long':
             if price > trade['peak']:
                 trade['peak'] = price
-                if current_pnl_pct >= 0.015:
+                if current_pnl_pct >= 0.03:  # Pas bij 3% winst trailing activeren voor swings
                     new_sl = price - trail_mult * atr
                     if new_sl > trade['sl']:
                         trade['sl'] = new_sl
-                        print(f"📈 Trailing stop {symbol} geactiveerd naar ${trade['sl']:.4f} (Boss mult: {trail_mult}x)")
             stop_hit = price <= trade['sl']
             tp_hit = price >= trade['tp']
         else:
             if price < trade['peak']:
                 trade['peak'] = price
-                if current_pnl_pct >= 0.015:
+                if current_pnl_pct >= 0.03:
                     new_sl = price + trail_mult * atr
                     if new_sl < trade['sl']:
                         trade['sl'] = new_sl
-                        print(f"📉 Trailing stop {symbol} geactiveerd naar ${trade['sl']:.4f} (Boss mult: {trail_mult}x)")
             stop_hit = price >= trade['sl']
             tp_hit = price <= trade['tp']
             
         if stop_hit or tp_hit:
-            reason = 'stop' if stop_hit else 'take-profit'
-            print(f"🛑 {reason} geraakt voor {side} {symbol} op ${price}. Positie sluiten...")
             if close_position(symbol, side, contracts):
                 if pnl_fraction(side, entry, price) < 0:
                     symbol_cooldowns[symbol] = time.time()
                 active_trades.pop(symbol, None)
 
-    for symbol in list(missing_counts.keys()):
-        if symbol in open_symbols or symbol not in active_trades:
-            missing_counts.pop(symbol, None)
-    for symbol in list(active_trades.keys()):
-        if symbol in open_symbols:
-            continue
-        missing_counts[symbol] = missing_counts.get(symbol, 0) + 1
-        if missing_counts[symbol] < MISSING_CHECKS_REQUIRED:
-            continue
-        missing_counts.pop(symbol, None)
-        active_trades.pop(symbol)
-
 
 def ensure_margin_and_leverage(symbol, target_leverage):
     if DRY_RUN:
-        print(f"[DRY_RUN] Zou leverage instellen op {target_leverage}x voor {symbol}")
         return True
-    has = getattr(exchange, 'has', {}) or {}
     try:
-        if has.get('setMarginMode'):
-            for attempt in range(2):
-                try:
-                    exchange.set_margin_mode(DESIRED_MARGIN_MODE, symbol)
-                    break
-                except Exception:
-                    if attempt == 1:
-                        raise
-                    time.sleep(PAUSE_RETRY)
-        for attempt in range(2):
-            try:
-                try:
-                    exchange.set_leverage(target_leverage, symbol)
-                except Exception:
-                    exchange.set_leverage(target_leverage, symbol, {'marginMode': DESIRED_MARGIN_MODE})
-                print(f"⚙️ Leverage ingesteld op {target_leverage}x voor {symbol}")
-                return True
-            except Exception:
-                if attempt == 1:
-                    raise
-                time.sleep(PAUSE_RETRY)
-    except Exception as e:
-        print(f"⛔ Margin/leverage setup mislukt voor {symbol}: {repr(e)}")
-    return False
+        exchange.set_margin_mode(DESIRED_MARGIN_MODE, symbol)
+        exchange.set_leverage(target_leverage, symbol)
+        return True
+    except Exception:
+        return False
 
 
 def compute_contract_amount(symbol, price, leverage):
@@ -316,12 +246,7 @@ def compute_contract_amount(symbol, price, leverage):
     if per_contract <= 0:
         return None
     amount = math.floor(target / per_contract)
-    if amount < 1:
-        if per_contract <= target * MAX_NOTIONAL_OVERSHOOT:
-            amount = 1
-        else:
-            return None
-    return float(amount)
+    return float(max(1, amount))
 
 
 def resolve_symbol(asset):
@@ -329,171 +254,76 @@ def resolve_symbol(asset):
     if primary in exchange.markets:
         return primary
     fallback = f"{asset}/USDT"
-    m = exchange.markets.get(fallback)
-    if m and (m.get('swap') or m.get('contract')):
-        return fallback
-    return None
+    return fallback if fallback in exchange.markets else None
 
 
 def execute_live_trades_scan():
     pull_latest_states_from_github()
-    print("--- [Futures Live Trader Worker] Start scan ---")
-
     try:
         exchange.load_markets()
-    except Exception as e:
-        print(f"Fout bij verbinden met KuCoin Futures: {e}")
-        return
-
-    try:
         positions = execute_with_retry(lambda: exchange.fetch_positions())
         active_symbols = {p.get('symbol') for p in positions if abs(float(p.get('contracts') or 0)) > 0}
-    except Exception as e:
-        print(f"⛔ Kan open posities niet ophalen ({e}); scan afgebroken.")
+    except Exception:
         return
 
     if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
-        print(f"🛡️ Maximaal aantal gelijktijdige posities ({MAX_CONCURRENT_POSITIONS}) bereikt.")
         return
 
     for asset in ASSETS:
         symbol = resolve_symbol(asset)
-        if symbol is None:
+        if not symbol or symbol in active_symbols or symbol in symbol_cooldowns:
             continue
-        if symbol in active_symbols:
+        if time.time() - symbol_cooldowns.get(symbol, 0) < COOLDOWN_SECONDS:
             continue
-        if symbol in symbol_cooldowns:
-            elapsed = time.time() - symbol_cooldowns[symbol]
-            if elapsed < COOLDOWN_SECONDS:
-                continue
-            del symbol_cooldowns[symbol]
-
         try:
             evaluate_and_trade(asset, symbol)
-        except Exception as e:
-            print(f"Fout bij verwerken van {asset}: {e}")
-        time.sleep(PAUSE_BETWEEN_ASSETS)
+        except Exception:
+            pass
 
 
 def evaluate_and_trade(asset, symbol):
-    state_15m = load_state(asset, '15m')
-    if state_15m is None:
+    state_4h = load_state(asset, '4h')
+    if state_4h is None:
         return
 
-    signal = state_15m['signal']
+    signal = state_4h['signal']
     if signal == 'none':
         return
     is_long = signal == 'long'
-    prob = float(state_15m.get('signal_probability', 50.0))
-    pred_move_pct = abs(float(state_15m.get('predicted_return_pct', 0.0)))
-    holdout_acc = state_15m.get('holdout_direction_accuracy')
-    atr_pct = float(state_15m.get('atr_pct') or 0.0)
+    prob = float(state_4h.get('direction_probability', 50.0))
+    pred_move_pct = abs(float(state_4h.get('predicted_return_pct', 0.0)))
+    atr_pct = float(state_4h.get('atr_pct') or 0.0)
 
     price = float(exchange.fetch_ticker(symbol)['last'])
     if atr_pct <= 0:
         return
     atr = price * atr_pct / 100.0
 
-    pattern_st = load_pattern_state(asset, '15m')
+    pattern_st = load_pattern_state(asset)
     if pattern_st:
         boss_signal = pattern_st.get('pattern_signal', 'none')
         boss_score = pattern_st.get('pattern_score', 50.0)
-        boss_leverage = int(pattern_st.get('recommended_leverage', 10))
-        boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 1.5))
+        boss_leverage = int(pattern_st.get('recommended_leverage', 2))
+        boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 2.5))
         
-        dynamic_min_score = float(pattern_st.get('min_score_required', 85.0))
-        strictness_mode = pattern_st.get('strictness_mode', 'strict')
-        is_squeeze = pattern_st.get('bollinger_squeeze', False)
-        
-        print(f"👑 [Final Boss] {asset}: Signaal={boss_signal.upper()} | Score={boss_score} (Vereist: {dynamic_min_score}, Modus: {strictness_mode}) | Lev={boss_leverage}x | Squeeze={is_squeeze}")
-        
-        if boss_signal != signal:
-            print(f"⛔ [FINAL BOSS VETO] Richting komt niet overeen met bot ('{boss_signal}' vs '{signal}').")
+        if boss_signal != signal or boss_score < 85.0:
             return
-        if boss_score < dynamic_min_score:
-            print(f"⛔ [FINAL BOSS VETO] Score ({boss_score}) is te laag volgens de agent zijn huidige regime ({dynamic_min_score}).")
-            return
-        print(f"✅ [FINAL BOSS GOEDKEURING] Groen licht onder '{strictness_mode}' regime!")
     else:
-        print(f"⚠️ [Final Boss] Geen state gevonden voor {asset}; overgeslagen.")
         return
 
     sgn = 1 if is_long else -1
     stop_loss_val = price - sgn * boss_trailing_mult * atr
-    effective_tp_mult = max(TP_ATR_mult_BASE, boss_trailing_mult * (MIN_RRR + 0.1))
+    effective_tp_mult = max(TP_ATR_mult_BASE, boss_trailing_mult * (MIN_RRR + 0.2))
     take_profit_val = price + sgn * effective_tp_mult * atr
-
-    if atr_pct < MIN_ATR_PCT or atr_pct > MAX_ATR_PCT:
-        print(f"⛔ [FILTER VETO] ATR% ({atr_pct:.2f}%) buiten bereik [{MIN_ATR_PCT}, {MAX_ATR_PCT}].")
-        return
-        
-    rrr = abs(take_profit_val - price) / abs(price - stop_loss_val)
-    if rrr < MIN_RRR:
-        print(f"⛔ [FILTER VETO] RRR ({rrr:.2f}) is lager dan vereist ({MIN_RRR}).")
-        return
-        
-    if holdout_acc is None or holdout_acc < MIN_HOLDOUT_ACCURACY:
-        print(f"⛔ [FILTER VETO] Holdout accuracy ({holdout_acc}) te laag (Min: {MIN_HOLDOUT_ACCURACY}).")
-        return
-
-    score = 0
-    state_1h = load_state(asset, '1h')
-    if state_1h is not None and state_1h['signal'] == signal:
-        score += 1
-
-    if asset == 'BTC':
-        score += 1
-    elif ENABLE_BTC_CORRELATION:
-        btc = load_state('BTC', '15m')
-        opposite = 'short' if is_long else 'long'
-        if btc is not None and btc['signal'] != opposite:
-            score += 1
-
-    try:
-        ob = exchange.fetch_order_book(symbol, limit=20)
-        time.sleep(PAUSE_AFTER_CALL)
-        bids = sum(b[1] for b in ob.get('bids', []))
-        asks = sum(a[1] for a in ob.get('asks', []))
-        if bids + asks > 0:
-            ratio = (bids if is_long else asks) / (bids + asks)
-            if ratio >= MIN_ORDERBOOK_IMBALANCE:
-                score += 1
-    except Exception:
-        pass
-
-    try:
-        funding = exchange.fetch_funding_rate(symbol).get('fundingRate')
-        time.sleep(PAUSE_AFTER_CALL)
-        if funding is not None and not ((is_long and funding > MAX_FUNDING_RATE) or
-                                        ((not is_long) and funding < -MAX_FUNDING_RATE)):
-            score += 1
-    except Exception:
-        pass
-
-    if prob < MIN_DIRECTION_PROBABILITY:
-        print(f"⛔ [FILTER VETO] Richting kans ({prob}%) is lager dan vereist ({MIN_DIRECTION_PROBABILITY}%).")
-        return
-        
-    if pred_move_pct < MIN_PREDICTED_RETURN_PCT:
-        print(f"⛔ [FILTER VETO] Voorspelde winst ({pred_move_pct}%) is lager dan vereist ({MIN_PREDICTED_RETURN_PCT}%).")
-        return
-        
-    if score < MIN_SCORE:
-        print(f"⛔ [FILTER VETO] Multi-factor score ({score}) is te laag (Vereist min: {MIN_SCORE}).")
-        return
 
     if not ensure_margin_and_leverage(symbol, boss_leverage):
         return
     amount = compute_contract_amount(symbol, price, boss_leverage)
     if amount is None:
-        print(f"⛔ [UITVOERING FOUT] Kon contracthoeveelheid niet berekenen voor {symbol}.")
         return
 
     side = 'buy' if is_long else 'sell'
-    direction_str = "LONG 📈" if is_long else "SHORT 📉"
-    print(f"🔥 {direction_str} {symbol}: {amount} contracten | Lev: {boss_leverage}x | SL ${stop_loss_val:.4f} | TP ${take_profit_val:.4f} (RRR: {rrr:.2f})")
     if DRY_RUN:
-        print("[DRY_RUN] Geen order geplaatst vanwege actieve DRY_RUN modus.")
         return
 
     params = {
@@ -503,44 +333,22 @@ def evaluate_and_trade(asset, symbol):
     }
     try:
         order = execute_with_retry(lambda: exchange.create_order(symbol, 'market', side, amount, None, params))
+        active_trades[symbol] = {
+            'side': 'long' if is_long else 'short', 
+            'entry': price, 'peak': price, 'atr': atr,
+            'sl': stop_loss_val, 'tp': take_profit_val,
+            'trailing_mult': boss_trailing_mult,
+        }
     except Exception:
-        try:
-            order = execute_with_retry(lambda: exchange.create_order(
-                symbol, 'market', side, amount, None, {'marginMode': DESIRED_MARGIN_MODE}
-            ))
-        except Exception as e2:
-            print(f"⛔ Fout bij orderplaatsing {symbol} na retries: {repr(e2)}")
-            return
-
-    print(f"✅ Order geplaatst: {order.get('id') if isinstance(order, dict) else order}")
-    active_trades[symbol] = {
-        'side': 'long' if is_long else 'short', 
-        'entry': price, 
-        'peak': price, 
-        'atr': atr,
-        'sl': stop_loss_val, 
-        'tp': take_profit_val,
-        'trailing_mult': boss_trailing_mult,
-    }
+        pass
 
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print(f"Futures Live Trader Worker gestart ({EXCHANGE_ID}, ${TRADE_AMOUNT_USDT} margin, {DESIRED_MARGIN_MODE}"
-          f"{', DRY_RUN' if DRY_RUN else ''}).")
-    last_trade_check_time = 0
-
     while True:
         try:
             manage_open_positions_and_trailing_stops()
-        except Exception as e:
-            print(f"Fout in positiebeheer lus: {e}")
-
-        if time.time() - last_trade_check_time >= TRADE_CHECK_INTERVAL_SECONDS:
-            try:
-                execute_live_trades_scan()
-            except Exception as e:
-                print(f"Fout in trades scan lus: {e}")
-            last_trade_check_time = time.time()
-
-        time.sleep(POSITION_CHECK_INTERVAL_SECONDS)
+            execute_live_trades_scan()
+        except Exception:
+            pass
+        time.sleep(60)
