@@ -5,7 +5,7 @@
   "recommended_trailing_mult": 1.5,
   "min_score_required": 85.0,
   "strictness_mode": "strict",
-  "rsi_15m": 61.54,
+  "rsi_15m": 73.58,
   "rsi_1h": 52.4,
   "volume_spike": false,
   "bollinger_squeeze": true,
@@ -17,5 +17,5 @@
     "bos_bullish": false,
     "bos_bearish": false
   },
-  "updated_at": 1792315653.7370212
+  "updated_at": 1792315974.1754196
 }
