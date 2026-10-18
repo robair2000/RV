@@ -25,7 +25,36 @@ from sklearn.ensemble import RandomForestRegressor
 warnings.filterwarnings('ignore')
 logging.getLogger('xgboost').setLevel(logging.CRITICAL)
 
-assets = ['BTC', 'ETH', 'LINK', 'SOL', 'AVAX']
+# --- DYNAMISCHE ASSET SELECTIE (Kern + Scanner Top 5) ---
+def get_combined_trading_symbols(top_n=5):
+    """
+    Combineert altijd de vaste kern (BTC, ETH, LINK) met de 
+    dynamische Top N uit de V20 ranking scanner (kucoin_best_coins_ranking.csv).
+    """
+    core_assets = ['BTC', 'ETH', 'LINK']
+    ranking_file = 'kucoin_best_coins_ranking.csv'
+    dynamic_assets = []
+    
+    if os.path.exists(ranking_file):
+        try:
+            df = pd.read_csv(ranking_file)
+            # Pak de top N symbolen en haal de asset naam eruit (bijv. 'SOL/USDT:USDT' -> 'SOL')
+            symbols = df['Symbol'].head(top_n).tolist()
+            for s in symbols:
+                asset_name = s.split('/')[0].split(':')[0]
+                if asset_name not in dynamic_assets:
+                    dynamic_assets.append(asset_name)
+            print(f"📈 Dynamische top {top_n} geladen uit scanner: {dynamic_assets}")
+        except Exception as e:
+            print(f"⚠️ Fout bij lezen van ranking CSV: {e}")
+            
+    # Combineer en verwijder dubbele waarden
+    combined = list(dict.fromkeys(core_assets + dynamic_assets))
+    print(f"🎯 Definitieve actieve trading scope ({len(combined)} assets): {combined}")
+    return combined
+
+# Haal direct bij start de actieve assets op
+assets = get_combined_trading_symbols(top_n=5)
 
 timeframes = {
     '4h': {'interval': '4h', 'limit': 500, 'min_interval_seconds': 3 * 3600},
