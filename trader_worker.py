@@ -100,8 +100,11 @@ def get_combined_trading_assets(top_n=5):
 
 
 TIMEFRAMES = ['4h', '1d']
-TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20))
 
+# --- CONFIGURATIE FUTURES SWING TRADING (Instelbaar via Render Env Vars) ---
+TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
+MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 84.0))
+COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 7200))
 
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
@@ -109,10 +112,7 @@ EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
 MAX_CONCURRENT_POSITIONS = 2
 MIN_RRR = 3.0
-COOLDOWN_SECONDS = 7200
 TP_ATR_mult_BASE = 5.0
-
-MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 84.0))
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 
 active_trades = {}
@@ -260,23 +260,16 @@ def close_position(symbol, side, contracts):
 
 
 def update_exchange_stop_loss(symbol, side, contracts, new_sl):
-    """
-    Maakt EERST de nieuwe stop-order aan met de correcte hoeveelheid contracten, 
-    en annuleert PAS DAARNA de oude stop-orders om onbeschermde momenten te voorkomen.
-    """
     if DRY_RUN:
         return
     try:
         close_side = 'sell' if side == 'long' else 'buy'
-        
-        # 1. Plaats EERST de nieuwe stop order
         new_order = exchange.create_order(symbol, 'stop', close_side, contracts, None, {
             'stopPrice': new_sl,
             'reduceOnly': True
         })
         new_order_id = new_order.get('id') if new_order else None
 
-        # 2. Annuleer PAS DAARNA de oude stop orders (behalve de net geplaatste)
         open_orders = exchange.fetch_open_orders(symbol)
         for o in open_orders:
             if o.get('id') != new_order_id and (o.get('type') == 'stop' or 'stop' in str(o.get('info', {})).lower()):
@@ -402,8 +395,6 @@ def ensure_margin_and_leverage(symbol, target_leverage):
 
 
 def compute_contract_amount(asset, symbol, price, leverage):
-    """Margin = exact TRADE_AMOUNT_USDT; de agent kiest de hefboom. Notional = margin * hefboom.
-    KuCoin handelt in hele contracten, dus we ronden af naar beneden (marge blijft <= TRADE_AMOUNT_USDT)."""
     target_notional = TRADE_AMOUNT_USDT * leverage
 
     try:
