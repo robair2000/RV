@@ -3,6 +3,7 @@ import ccxt
 import pandas as pd
 import numpy as np
 import time
+import math
 
 # --- CONFIGURATIE ---
 EXCHANGE = ccxt.kucoin({
@@ -42,14 +43,14 @@ def fetch_top_performing_coins():
     priority_assets = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'LINK/USDT:USDT', 'AVAX/USDT:USDT', 'XRP/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT']
     test_symbols = [s for s in priority_assets if s in symbols] + [s for s in symbols if s not in priority_assets]
 
-    for symbol in test_symbols:
+    # Beperk tot de top 50 om performance te waarborgen en vertraging te voorkomen
+    for symbol in test_symbols[:50]:
         asset = symbol.split('/')[0]
         
         # 1. LIQUIDITEITSFILTER VIA TICKER (24u Volume in USDT)
         ticker = tickers.get(symbol, {})
         quote_volume_24h = float(ticker.get('quoteVolume') or 0.0)
         
-        # Als ticker volume ontbreekt, schatten we het in via de recente OHLCV candles
         try:
             ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=100)
             if not ohlcv or len(ohlcv) < 30:
@@ -62,12 +63,10 @@ def fetch_top_performing_coins():
             high = df['high']
             low = df['low']
             
-            # Bereken gemiddeld volume in USDT over de laatste candles als fallback
-            recent_quote_vol = (df['volume'].tail(24) * close.tail(24)).mean() * 6 # schatting 24h
+            recent_quote_vol = (df['volume'].tail(24) * close.tail(24)).mean() * 6
             if quote_volume_24h == 0:
                 quote_volume_24h = recent_quote_vol
 
-            # Handhaaf het strenge liquiditeitsfilter
             if quote_volume_24h < MIN_DAILY_VOLUME_USDT and symbol not in priority_assets:
                 continue
 
@@ -81,7 +80,6 @@ def fetch_top_performing_coins():
             
             bh_return = (close.iloc[-1] / close.iloc[0] - 1) * 100
 
-            # Score formule: Balans tussen liquiditeit, ATR en trendstabiliteit (zonder blinde pomp-chasing)
             liquidity_score = min(math.log10(quote_volume_24h + 1), 10.0)
             composite_score = round((trend_strength * 1.2) + (atr_pct * 1.5) + (liquidity_score * 2.0), 2)
 
