@@ -426,14 +426,14 @@ def execute_live_trades_scan(symbols):
 
 
 def evaluate_and_trade(asset, symbol):
+    # 1. Laad de ML Voorspelling van de Quant Worker (model_state_*.json)
     state_4h = load_state(asset, '4h')
     if state_4h is None:
         return
 
-    signal = state_4h['signal']
-    if signal == 'none':
+    quant_signal = state_4h['signal']
+    if quant_signal not in ('long', 'short'):
         return
-    is_long = signal == 'long'
 
     price = float(exchange.fetch_ticker(symbol)['last'])
     atr_pct = float(state_4h.get('atr_pct') or 0.0)
@@ -441,17 +441,22 @@ def evaluate_and_trade(asset, symbol):
         return
     atr = price * atr_pct / 100.0
 
+    # 2. Laad de S&R Confluence van de Agent (pattern_state_*.json)
     pattern_st = load_pattern_state(asset)
-    if pattern_st:
-        boss_signal = pattern_st.get('pattern_signal', 'none')
-        boss_score = pattern_st.get('pattern_score', 50.0)
-        boss_leverage = int(pattern_st.get('recommended_leverage', 2))
-        boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 2.5))
-        
-        if boss_signal != signal or boss_score < MIN_BOSS_SCORE:
-            return
-    else:
+    if pattern_st is None:
         return
+
+    boss_signal = pattern_st.get('pattern_signal', 'none')
+    boss_score = pattern_st.get('pattern_score', 50.0)
+    boss_leverage = int(pattern_st.get('recommended_leverage', 2))
+    boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 2.5))
+    min_score_req = pattern_st.get('min_score_required', MIN_BOSS_SCORE)
+
+    # 3. STRIKTE CONFLUENCE GATEKEEPER: Quant en Agent MOETEN in lijn zijn!
+    if boss_signal != quant_signal or boss_score < min_score_req:
+        return
+
+    is_long = (quant_signal == 'long')
 
     if is_long:
         limit_price = price - (0.2 * atr)
