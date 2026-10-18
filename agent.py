@@ -368,11 +368,9 @@ def push_state_to_github(filename, data):
     except Exception:
         pass
 
-
 def run_final_boss_scan():
     print("--- [V20 S&R & S&D Agent] Start marktscan ---")
     
-    # Haal eerst de nieuwste ranking op van GitHub zodat we altijd synchroon lopen
     pull_ranking_from_github()
     symbols = get_combined_trading_assets(top_n=5)
 
@@ -391,19 +389,11 @@ def run_final_boss_scan():
         if not df_4h.empty and not df_1d.empty:
             analysis = analyze_advanced_patterns(df_4h, df_1d, asset=asset)
             
+            # De agent schrijft ALLEEN zijn eigen pattern state weg!
             pattern_filename = f'pattern_state_{asset.lower()}_4h.json'
             push_state_to_github(pattern_filename, analysis)
 
-            model_data = {
-                'data_status': 'ok',
-                'signal': analysis['pattern_signal'],
-                'atr_pct': analysis.get('atr_pct', 2.0),
-                'updated_at': analysis['updated_at']
-            }
-            model_filename = f'model_state_{asset.lower()}_4h.json'
-            push_state_to_github(model_filename, model_data)
-
-            print(f"👑 {asset} V20: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']}")
+            print(f"👑 {asset} V20 Agent: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']}")
         time.sleep(5.0)
 
 
