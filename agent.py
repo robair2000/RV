@@ -72,8 +72,8 @@ def fetch_historical_candles(symbol, timeframe, limit=120):
 
 def analyze_advanced_patterns(df_15m, df_1h):
     """
-    De Final Boss analyse met adaptief leervermogen: combineert candlestick patronen, 
-    Bollinger Squeezes, RSI momentum en past dynamisch de strengheid (flexibiliteit) aan.
+    De Final Boss analyse met Smart Money & Institutional Price Action:
+    Combineert FVG's, Liquidity Sweeps, BOS, Bollinger Squeezes en RSI momentum.
     """
     if df_15m is None or len(df_15m) < 40 or df_1h is None or len(df_1h) < 40:
         return {
@@ -100,7 +100,7 @@ def analyze_advanced_patterns(df_15m, df_1h):
         rsi = 100 - (100 / (1 + rs))
         current_rsi = float(rsi.iloc[-1])
 
-        # 2. Bollinger Bands & Squeeze detectie (Volatiliteitsknijp)
+        # 2. Bollinger Bands & Squeeze detectie
         sma20 = close.rolling(window=20).mean()
         std20 = close.rolling(window=20).std()
         bb_upper = sma20 + (std20 * 2)
@@ -112,16 +112,36 @@ def analyze_advanced_patterns(df_15m, df_1h):
         vol_sma = volume.rolling(window=20).mean()
         is_volume_spike = float(volume.iloc[-1]) > float(vol_sma.iloc[-1]) * 1.4
 
-        # 4. Candlestick patronen (Engulfing)
-        is_bull_eng = (close.iloc[-1] > df['open'].iloc[-1]) and (close.iloc[-2] < df['open'].iloc[-2]) and (close.iloc[-1] > df['open'].iloc[-2])
-        is_bear_eng = (close.iloc[-1] < df['open'].iloc[-1]) and (close.iloc[-2] > df['open'].iloc[-2]) and (close.iloc[-1] < df['open'].iloc[-2])
-        
+        # 4. Institutionele Price Action (Smart Money Concepts)
+        recent = df.tail(30)
+        r_highs = recent['high'].values
+        r_lows = recent['low'].values
+        r_closes = recent['close'].values
+
+        # Fair Value Gaps (FVG)
+        fvg_bullish = any(r_lows[i+2] > r_highs[i] for i in range(len(recent) - 2))
+        fvg_bearish = any(r_highs[i+2] < r_lows[i] for i in range(len(recent) - 2))
+
+        # Liquidity Sweep / Stop Hunt (SFP)
+        prev_high = r_highs[:-1].max()
+        prev_low = r_lows[:-1].min()
+        sfp_bullish = r_lows[-1] < prev_low and r_closes[-1] > prev_low
+        sfp_bearish = r_highs[-1] > prev_high and r_closes[-1] < prev_high
+
+        # Market Structure Shift / BOS
+        bos_bullish = r_closes[-1] > r_highs[-2] and r_closes[-2] > r_closes[-3]
+        bos_bearish = r_closes[-1] < r_lows[-2] and r_closes[-2] < r_closes[-3]
+
         return {
             'rsi': current_rsi,
             'is_squeeze': bool(is_squeeze),
             'is_volume_spike': bool(is_volume_spike),
-            'is_bull_eng': bool(is_bull_eng),
-            'is_bear_eng': bool(is_bear_eng),
+            'fvg_bullish': bool(fvg_bullish),
+            'fvg_bearish': bool(fvg_bearish),
+            'sfp_bullish': bool(sfp_bullish),
+            'sfp_bearish': bool(sfp_bearish),
+            'bos_bullish': bool(bos_bullish),
+            'bos_bearish': bool(bos_bearish),
             'trend': float((close.iloc[-1] - close.iloc[-5]) / close.iloc[-5]),
             'volatility': float(std20.iloc[-1] / close.iloc[-1])
         }
@@ -132,21 +152,25 @@ def analyze_advanced_patterns(df_15m, df_1h):
     score = 50.0
     signal = 'none'
 
-    # Logica voor LONG
-    if (ind_15m['is_bull_eng'] or ind_15m['rsi'] < 35) and ind_1h['trend'] > -0.01:
+    # --- INSTITUTIONELE LOGICA VOOR LONG ---
+    if (ind_15m['sfp_bullish'] or ind_15m['fvg_bullish'] or ind_15m['rsi'] < 38) and ind_1h['trend'] > -0.015:
         signal = 'long'
         score = 75.0
-        if ind_15m['is_volume_spike']: score += 10.0
-        if ind_15m['is_squeeze']: score += 10.0  # Breakout potentie
-        if ind_1h['trend'] > 0: score += 5.0     # Multi-timeframe steun
+        if ind_15m['sfp_bullish']: score += 10.0  # Stop hunt succesvol afgerond
+        if ind_15m['fvg_bullish']: score += 10.0  # Disbalans opgevuld
+        if ind_15m['bos_bullish']: score += 10.0  # Structuur breekt omhoog
+        if ind_15m['is_volume_spike']: score += 5.0
+        if ind_15m['is_squeeze']: score += 5.0
 
-    # Logica voor SHORT
-    elif (ind_15m['is_bear_eng'] or ind_15m['rsi'] > 65) and ind_1h['trend'] < 0.01:
+    # --- INSTITUTIONELE LOGICA VOOR SHORT ---
+    elif (ind_15m['sfp_bearish'] or ind_15m['fvg_bearish'] or ind_15m['rsi'] > 62) and ind_1h['trend'] < 0.015:
         signal = 'short'
         score = 75.0
-        if ind_15m['is_volume_spike']: score += 10.0
-        if ind_15m['is_squeeze']: score += 10.0
-        if ind_1h['trend'] < 0: score += 5.0
+        if ind_15m['sfp_bearish']: score += 10.0
+        if ind_15m['fvg_bearish']: score += 10.0
+        if ind_15m['bos_bearish']: score += 10.0
+        if ind_15m['is_volume_spike']: score += 5.0
+        if ind_15m['is_squeeze']: score += 5.0
 
     score = min(float(score), 98.0)
 
@@ -188,6 +212,14 @@ def analyze_advanced_patterns(df_15m, df_1h):
         'rsi_1h': round(ind_1h['rsi'], 2),
         'volume_spike': ind_15m['is_volume_spike'],
         'bollinger_squeeze': ind_15m['is_squeeze'],
+        'smart_money': {
+            'fvg_bullish': ind_15m['fvg_bullish'],
+            'fvg_bearish': ind_15m['fvg_bearish'],
+            'liquidity_sweep_bullish': ind_15m['sfp_bullish'],
+            'liquidity_sweep_bearish': ind_15m['sfp_bearish'],
+            'bos_bullish': ind_15m['bos_bullish'],
+            'bos_bearish': ind_15m['bos_bearish']
+        },
         'updated_at': time.time()
     }
 
@@ -196,7 +228,6 @@ def push_state_to_github(filename, data):
     token = os.environ.get('GITHUB_TOKEN')
     content_bytes = json.dumps(data, indent=2).encode('utf-8')
     
-    # --- SLIMME PUSH: CONTROLEER OF DATA GEWIJZIGD IS ---
     if os.path.exists(filename):
         try:
             with open(filename, 'rb') as f:
@@ -248,7 +279,7 @@ def push_state_to_github(filename, data):
 
 
 def run_final_boss_scan():
-    print("--- [Final Boss Agent] Start adaptieve evaluatie ---")
+    print("--- [Final Boss Agent] Start Smart Money & Prijsactie evaluatie ---")
     try:
         exchange.load_markets()
     except Exception as e:
@@ -267,13 +298,14 @@ def run_final_boss_scan():
             analysis = analyze_advanced_patterns(df_15m, df_1h)
             filename = f'pattern_state_{asset.lower()}_15m.json'
             push_state_to_github(filename, analysis)
-            print(f"👑 {asset} Final Boss: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']} | Min.Vereist={analysis['min_score_required']} ({analysis['strictness_mode']}) | Lev={analysis['recommended_leverage']}x")
+            sm = analysis['smart_money']
+            print(f"👑 {asset} Final Boss: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']} | SFP={sm['liquidity_sweep_bullish'] or sm['liquidity_sweep_bearish']} | FVG={sm['fvg_bullish'] or sm['fvg_bearish']} | Lev={analysis['recommended_leverage']}x")
         time.sleep(5.0)
 
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print("🚀 Final Boss Agent Web Service (Adaptief & Slim) gestart.")
+    print("🚀 Final Boss Agent Web Service (Smart Money Edition) gestart.")
 
     while True:
         try:
