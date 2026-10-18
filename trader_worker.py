@@ -9,6 +9,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import ccxt
+import pandas as pd
 
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -31,7 +32,34 @@ def run_server():
 
 
 # --- CONFIGURATIE FUTURES SWING TRADING (V20 ZONE-BASED LIMITS) ---
-ASSETS = ['BTC', 'ETH', 'LINK', 'SOL', 'AVAX']
+def get_combined_trading_assets(top_n=5):
+    """
+    Combineert altijd de vaste kern (BTC, ETH, LINK) met de 
+    dynamische Top N uit de V20 ranking scanner (kucoin_best_coins_ranking.csv).
+    """
+    core_assets = ['BTC', 'ETH', 'LINK']
+    ranking_file = 'kucoin_best_coins_ranking.csv'
+    dynamic_assets = []
+    
+    if os.path.exists(ranking_file):
+        try:
+            df = pd.read_csv(ranking_file)
+            symbols = df['Symbol'].head(top_n).tolist()
+            for s in symbols:
+                asset_name = s.split('/')[0].split(':')[0]
+                if asset_name not in dynamic_assets:
+                    dynamic_assets.append(asset_name)
+            print(f"📈 Dynamische top {top_n} ingeladen voor trader: {dynamic_assets}")
+        except Exception as e:
+            print(f"⚠️ Fout bij lezen van ranking CSV in trader: {e}")
+            
+    combined = list(dict.fromkeys(core_assets + dynamic_assets))
+    print(f"🎯 Actieve trader trading scope ({len(combined)} assets): {combined}")
+    return combined
+
+# Haal de actieve assets op bij start
+ASSETS = get_combined_trading_assets(top_n=5)
+
 TIMEFRAMES = ['4h', '1d']
 TRADE_CHECK_INTERVAL_SECONDS = 3600
 POSITION_CHECK_INTERVAL_SECONDS = 120
