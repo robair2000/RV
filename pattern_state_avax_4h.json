@@ -1,11 +1,11 @@
 {
-  "pattern_score": 50.0,
-  "pattern_signal": "none",
-  "recommended_leverage": 2,
+  "pattern_score": 92.28958383202553,
+  "pattern_signal": "long",
+  "recommended_leverage": 3,
   "recommended_trailing_mult": 2.5,
   "min_score_required": 84.0,
   "strictness_mode": "v20_sr_sd_confluence",
-  "atr_pct": 2.77,
-  "adx_4h": 42.18,
-  "updated_at": 1792337539.9756892
+  "atr_pct": 2.55,
+  "adx_4h": 45.74,
+  "updated_at": 1792354551.0307257
 }
