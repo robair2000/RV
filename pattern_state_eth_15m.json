@@ -1,11 +1,11 @@
 {
-  "pattern_score": 50.0,
-  "pattern_signal": "none",
-  "recommended_leverage": 1,
-  "recommended_trailing_mult": 1.5,
+  "pattern_score": 92.0,
+  "pattern_signal": "long",
+  "recommended_leverage": 10,
+  "recommended_trailing_mult": 2.0,
   "min_score_required": 85.0,
   "strictness_mode": "strict",
-  "rsi_15m": 73.58,
+  "rsi_15m": 70.93,
   "rsi_1h": 52.4,
   "volume_spike": false,
   "bollinger_squeeze": true,
@@ -13,9 +13,9 @@
     "fvg_bullish": true,
     "fvg_bearish": true,
     "liquidity_sweep_bullish": false,
-    "liquidity_sweep_bearish": true,
-    "bos_bullish": false,
+    "liquidity_sweep_bearish": false,
+    "bos_bullish": true,
     "bos_bearish": false
   },
-  "updated_at": 1792316614.574733
+  "updated_at": 1792316934.645151
 }
