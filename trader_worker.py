@@ -81,7 +81,7 @@ def pull_ranking_from_github():
 
 
 def get_combined_trading_assets(top_n=5):
-    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
+    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_symbols = []
     
@@ -100,11 +100,8 @@ def get_combined_trading_assets(top_n=5):
 
 
 TIMEFRAMES = ['4h', '1d']
-TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 7.7))
+TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20))
 
-ASSET_MARGIN_WEIGHTS = {
-    'BTC': 1.5, 'LINK': 1.5, 'ETH': 1.0, 'SOL': 1.0, 'AVAX': 1.0
-}
 
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
@@ -405,10 +402,10 @@ def ensure_margin_and_leverage(symbol, target_leverage):
 
 
 def compute_contract_amount(asset, symbol, price, leverage):
-    weight = ASSET_MARGIN_WEIGHTS.get(asset, 1.0)
-    target_margin = TRADE_AMOUNT_USDT * weight
-    target_notional = target_margin * leverage
-    
+    """Margin = exact TRADE_AMOUNT_USDT; de agent kiest de hefboom. Notional = margin * hefboom.
+    KuCoin handelt in hele contracten, dus we ronden af naar beneden (marge blijft <= TRADE_AMOUNT_USDT)."""
+    target_notional = TRADE_AMOUNT_USDT * leverage
+
     try:
         market_info = exchange.market(symbol)
         contract_size = float(market_info.get('contractSize') or 1.0)
@@ -420,15 +417,16 @@ def compute_contract_amount(asset, symbol, price, leverage):
     per_contract_notional = price * contract_size
     if per_contract_notional <= 0:
         return None
-        
-    if per_contract_notional > target_notional:
-        print(f"⚠️ Minimale contractwaarde voor {symbol} ({per_contract_notional:.2f} USDT) is groter dan doel-notional ({target_notional:.2f} USDT). Sla over.")
+
+    lots = math.floor(target_notional / per_contract_notional)
+    if lots < max(1, min_amount):
+        print(f"⚠️ {symbol}: 1 contract = {per_contract_notional:.2f} USDT notional, doel {target_notional:.2f} "
+              f"({TRADE_AMOUNT_USDT} margin x {leverage}x). Verhoog TRADE_AMOUNT_USDT. Overgeslagen.")
         return None
 
-    raw_amount = target_notional / per_contract_notional
-    amount = max(min_amount, round(raw_amount, 4))
-
-    return float(amount)
+    used_margin = lots * per_contract_notional / leverage
+    print(f"📐 {symbol}: {lots} contract(en), notional {lots*per_contract_notional:.2f}, marge {used_margin:.2f} USDT @ {leverage}x")
+    return float(lots)
 
 
 def execute_live_trades_scan(symbols):
