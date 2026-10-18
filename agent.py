@@ -40,7 +40,7 @@ def run_server():
 
 
 # --- CONFIGURATIE FINAL BOSS AGENT (SWING SNIPER MODE: 4h & 1d) ---
-ASSETS = ['BTC', 'ETH', 'LINK']
+ASSETS = ['BTC', 'ETH', 'LINK', 'SOL', 'AVAX']
 TIMEFRAMES = {'4h': '4h', '1d': '1d'}
 CHECK_INTERVAL_SECONDS = 1800  # Elke 30 minuten scannen (voldoende voor macro candles)
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
