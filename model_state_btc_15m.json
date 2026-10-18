@@ -56,48 +56,48 @@
         "taker_buy_ratio",
         "MACD_hist"
     ],
-    "last_trained_timestamp": 1792296045.338013,
+    "last_trained_timestamp": 1792296923.2850215,
     "model_weights": {
-        "xgb": 0.3364471973216934,
-        "cat": 0.32978302890460726,
-        "rf": 0.3337697737736992
+        "xgb": 0.33538830437896233,
+        "cat": 0.32910905912684507,
+        "rf": 0.3355026364941927
     },
     "model_errors": {
-        "xgb": 0.0009818217581541223,
-        "cat": 0.0010016621733440736,
-        "rf": 0.0009896977121175894
+        "xgb": 0.0009973220357105165,
+        "cat": 0.0010163504877179672,
+        "rf": 0.000996982169373154
     },
-    "baseline_error": 0.9991510652148532,
-    "last_prediction": 81979.67916237669,
-    "last_prediction_price": 81979.67916237669,
-    "predicted_return_pct": 0.03292040698684265,
-    "direction_probability": 42.262596130371094,
-    "signal": "none",
-    "signal_probability": 50.0,
-    "holdout_direction_accuracy": 0.5333333333333333,
-    "holdout_classifier_accuracy": 0.5666666666666667,
+    "baseline_error": 0.988914820326899,
+    "last_prediction": 81932.20969606366,
+    "last_prediction_price": 81932.20969606366,
+    "predicted_return_pct": 0.04433640275477456,
+    "direction_probability": 55.158145904541016,
+    "signal": "long",
+    "signal_probability": 55.158145904541016,
+    "holdout_direction_accuracy": 0.5666666666666667,
+    "holdout_classifier_accuracy": 0.6,
     "holdout_samples": 30,
-    "atr": 132.8928571428592,
-    "atr_pct": 0.16215799740930953,
-    "last_close": 81952.7,
-    "last_candle_ts": 1792295100,
+    "atr": 134.01428571428758,
+    "atr_pct": 0.16363979846889476,
+    "last_close": 81895.9,
+    "last_candle_ts": 1792296000,
     "data_status": "ok",
-    "stop_loss": 0.0,
-    "take_profit": 0.0,
-    "updated_at": 1792296045,
+    "stop_loss": 81694.87857142856,
+    "take_profit": 82230.93571428572,
+    "updated_at": 1792296923,
     "model_errors_pct": {
-        "xgb": 0.09818217581541223,
-        "cat": 0.10016621733440736,
-        "rf": 0.09896977121175894
+        "xgb": 0.09973220357105166,
+        "cat": 0.10163504877179672,
+        "rf": 0.0996982169373154
     },
     "model_errors_usd": {
-        "xgb": 80.46294399947733,
-        "cat": 82.08891959341486,
-        "rf": 81.10839969185916
+        "xgb": 81.67658570434489,
+        "cat": 83.23493790710187,
+        "rf": 81.64875204476687
     },
     "model_errors_readable": {
-        "xgb": "80.46 USD (0.10%)",
-        "cat": "82.09 USD (0.10%)",
-        "rf": "81.11 USD (0.10%)"
+        "xgb": "81.68 USD (0.10%)",
+        "cat": "83.23 USD (0.10%)",
+        "rf": "81.65 USD (0.10%)"
     }
 }
