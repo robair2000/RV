@@ -1,6 +1,78 @@
 {
-  "data_status": "ok",
-  "signal": "none",
-  "atr_pct": 1.88,
-  "updated_at": 1792341696.415169
+    "learning_rate": 0.060000000000000005,
+    "lookback_window": 100,
+    "current_regime": "trending",
+    "regime_features": {
+        "trending": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ],
+        "sideways": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ]
+    },
+    "active_features": [
+        "return_1",
+        "dist_sma20",
+        "dist_sma50",
+        "RSI",
+        "atr_ratio",
+        "bb_position",
+        "ADX",
+        "MACD_hist",
+        "OBV_slope",
+        "VWAP_dist",
+        "dist_support",
+        "dist_resistance"
+    ],
+    "last_trained_timestamp": 1792342937.3692436,
+    "model_weights": {
+        "xgb": 0.29513033179189474,
+        "cat": 0.35439245308661366,
+        "rf": 0.3504772151214915
+    },
+    "model_errors": {
+        "xgb": null,
+        "cat": null,
+        "rf": null
+    },
+    "baseline_error": 1.099629151600843,
+    "last_prediction": 0.01296214991337254,
+    "last_prediction_price": 0.01296214991337254,
+    "predicted_return_pct": -0.10673617931149172,
+    "direction_probability": 35.76785659790039,
+    "signal": "short",
+    "signal_probability": 64.23214340209961,
+    "holdout_direction_accuracy": 0.44,
+    "holdout_classifier_accuracy": null,
+    "holdout_samples": 0,
+    "atr": 0.00016678571428571418,
+    "atr_pct": 1.2853399682931117,
+    "last_close": 0.012976,
+    "last_candle_ts": 0,
+    "data_status": "ok",
+    "stop_loss": 0.013392964285714286,
+    "take_profit": 0.01214207142857143,
+    "updated_at": 1792342937
 }
