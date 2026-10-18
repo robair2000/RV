@@ -30,21 +30,20 @@ def run_server():
     HTTPServer(("0.0.0.0", port), HealthCheckHandler).serve_forever()
 
 
-# --- CONFIGURATIE FUTURES SWING TRADING (4h & 1d) ---
+# --- CONFIGURATIE FUTURES SWING TRADING (V20 ZONE-BASED LIMITS) ---
 ASSETS = ['BTC', 'ETH', 'LINK', 'SOL', 'AVAX']
 TIMEFRAMES = ['4h', '1d']
-TRADE_CHECK_INTERVAL_SECONDS = 3600   # Elk uur controleren op nieuwe swing setups
-POSITION_CHECK_INTERVAL_SECONDS = 120 # Elke 2 minuten posities controleren
+TRADE_CHECK_INTERVAL_SECONDS = 3600
+POSITION_CHECK_INTERVAL_SECONDS = 120
 
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
 
-# OPTIMALISATIE 3: DYNAMIC SIZING PER ASSET (Sterke munten krijgen meer gewicht)
 ASSET_MARGIN_WEIGHTS = {
-    'BTC': 1.5,   # 30 USDT bij 20 basis
-    'LINK': 1.5,  # 30 USDT bij 20 basis (sterke historische performer)
-    'ETH': 1.0,   # 20 USDT
-    'SOL': 1.0,   # 20 USDT (volatieler, standaard behouden)
-    'AVAX': 1.0   # 20 USDT (volatieler, standaard behouden)
+    'BTC': 1.5,
+    'LINK': 1.5,
+    'ETH': 1.0,
+    'SOL': 1.0,
+    'AVAX': 1.0
 }
 
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
@@ -52,21 +51,11 @@ DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
 MAX_CONCURRENT_POSITIONS = 2
-
-MIN_DIRECTION_PROBABILITY = float(os.environ.get('MIN_DIRECTION_PROBABILITY', 65.0))
-MIN_PREDICTED_RETURN_PCT = float(os.environ.get('MIN_PREDICTED_RETURN_PCT', 0.25))
-MIN_HOLDOUT_ACCURACY = float(os.environ.get('MIN_HOLDOUT_ACCURACY', 0.52))
-MIN_RRR = 2.0  # Hogere RRR vereist voor swing trades
-MIN_ATR_PCT = 0.5
-MAX_ATR_PCT = 8.0
+MIN_RRR = 3.0
 COOLDOWN_SECONDS = 7200
+TP_ATR_mult_BASE = 5.0
 
-TP_ATR_mult_BASE = 4.0
-MAX_NOTIONAL_OVERSHOOT = 1.5
-
-# OPTIMALISATIE 2: VERHOOGDE KWALITEITSDREMPEL VOOR BOSS SCORE
-MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 88.0))
-
+MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 84.0))
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
@@ -74,8 +63,6 @@ GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
 active_trades = {}
 symbol_cooldowns = {}
-missing_counts = {}
-MISSING_CHECKS_REQUIRED = 2
 
 exchange = getattr(ccxt, EXCHANGE_ID)({
     'apiKey': os.getenv('KUCOIN_API_KEY', ''),
@@ -98,7 +85,6 @@ def execute_with_retry(func, retries=3, delay=2):
 
 
 def push_trader_status_to_github():
-    """Slaat de live status op en pusht trader_status.json naar GitHub voor het dashboard."""
     data = {
         'updated_at': time.time(),
         'active_trades': active_trades,
@@ -268,7 +254,7 @@ def manage_open_positions_and_trailing_stops():
         
         distance_in_atr = sgn * (price - entry) / atr if atr > 0 else 0.0
 
-        if distance_in_atr >= 2.0 and not trade.get('breakeven_secured', False):
+        if distance_in_atr >= 2.4 and not trade.get('breakeven_secured', False):
             if side == 'long' and trade['sl'] < entry:
                 trade['sl'] = entry
                 trade['breakeven_secured'] = True
@@ -281,7 +267,7 @@ def manage_open_positions_and_trailing_stops():
         if side == 'long':
             if price > trade['peak']:
                 trade['peak'] = price
-                if distance_in_atr >= 2.0:
+                if distance_in_atr >= 2.4:
                     new_sl = price - (trail_mult * 0.8) * atr
                     if new_sl > trade['sl']:
                         trade['sl'] = new_sl
@@ -291,7 +277,7 @@ def manage_open_positions_and_trailing_stops():
         else:
             if price < trade['peak']:
                 trade['peak'] = price
-                if distance_in_atr >= 2.0:
+                if distance_in_atr >= 2.4:
                     new_sl = price + (trail_mult * 0.8) * atr
                     if new_sl < trade['sl']:
                         trade['sl'] = new_sl
@@ -322,7 +308,6 @@ def ensure_margin_and_leverage(symbol, target_leverage):
 
 
 def compute_contract_amount(asset, symbol, price, leverage):
-    # Dynamic sizing per asset toegepast
     weight = ASSET_MARGIN_WEIGHTS.get(asset, 1.0)
     target_margin = TRADE_AMOUNT_USDT * weight
     target = target_margin * leverage
@@ -351,9 +336,13 @@ def execute_live_trades_scan():
     try:
         exchange.load_markets()
         positions = execute_with_retry(lambda: exchange.fetch_positions())
-        active_symbols = {p.get('symbol') for p in positions if abs(float(p.get('contracts') or 0)) > 0}
     except Exception:
         return
+
+    active_symbols = set()
+    for p in positions:
+        if abs(float(p.get('contracts') or 0)) > 0:
+            active_symbols.add(p.get('symbol'))
 
     if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
         return
@@ -393,21 +382,25 @@ def evaluate_and_trade(asset, symbol):
         boss_leverage = int(pattern_st.get('recommended_leverage', 2))
         boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 2.5))
         
-        # Strenge score drempel toegepast (MIN_BOSS_SCORE = 88.0)
         if boss_signal != signal or boss_score < MIN_BOSS_SCORE:
             return
     else:
         return
 
+    if is_long:
+        limit_price = price - (0.2 * atr)
+    else:
+        limit_price = price + (0.2 * atr)
+
     sgn = 1 if is_long else -1
-    stop_loss_val = price - sgn * boss_trailing_mult * atr
+    stop_loss_val = limit_price - sgn * boss_trailing_mult * atr
     effective_tp_mult = max(TP_ATR_mult_BASE, boss_trailing_mult * (MIN_RRR + 0.2))
-    take_profit_val = price + sgn * effective_tp_mult * atr
+    take_profit_val = limit_price + sgn * effective_tp_mult * atr
 
     if not ensure_margin_and_leverage(symbol, boss_leverage):
         return
         
-    amount = compute_contract_amount(asset, symbol, price, boss_leverage)
+    amount = compute_contract_amount(asset, symbol, limit_price, boss_leverage)
     if amount is None:
         return
 
@@ -421,17 +414,17 @@ def evaluate_and_trade(asset, symbol):
         'marginMode': DESIRED_MARGIN_MODE,
     }
     try:
-        order = execute_with_retry(lambda: exchange.create_order(symbol, 'market', side, amount, None, params))
+        order = execute_with_retry(lambda: exchange.create_order(symbol, 'limit', side, amount, limit_price, params))
         active_trades[symbol] = {
             'side': 'long' if is_long else 'short', 
-            'entry': price, 'peak': price, 'atr': atr,
+            'entry': limit_price, 'peak': limit_price, 'atr': atr,
             'sl': stop_loss_val, 'tp': take_profit_val,
             'trailing_mult': boss_trailing_mult,
             'breakeven_secured': False,
         }
         push_trader_status_to_github()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Fout bij plaatsen zone-based limit order voor {symbol}: {e}")
 
 
 if __name__ == '__main__':
