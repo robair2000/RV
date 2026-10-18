@@ -30,7 +30,7 @@ def run_server():
 
 
 # --- CONFIGURATIE FUTURES SWING TRADING (4h & 1d) ---
-ASSETS = ['BTC', 'ETH', 'LINK']
+ASSETS = ['BTC', 'ETH', 'LINK', 'SOL', 'AVAX']
 TIMEFRAMES = ['4h', '1d']
 TRADE_CHECK_INTERVAL_SECONDS = 3600   # Elk uur controleren op nieuwe swing setups
 POSITION_CHECK_INTERVAL_SECONDS = 120 # Elke 2 minuten posities controleren
