@@ -39,7 +39,7 @@ def run_server():
     server.serve_forever()
 
 
-# --- CONFIGURATIE FINAL BOSS AGENT (SNIPER MODE) ---
+# --- CONFIGURATIE FINAL BOSS AGENT (ULTIMATE SNIPER MODE) ---
 ASSETS = ['BTC', 'ETH', 'LINK']
 TIMEFRAMES = {'15m': '15m', '1h': '1h'}
 CHECK_INTERVAL_SECONDS = 300  
@@ -72,8 +72,8 @@ def fetch_historical_candles(symbol, timeframe, limit=120):
 
 def analyze_advanced_patterns(df_15m, df_1h):
     """
-    De Final Boss Sniper Mode: Strenge, kwalitatieve Smart Money filters
-    die alleen high-conviction setups doorlaten en over-trading tegengaan.
+    De Final Boss Ultimate Sniper Mode: Maximale kwaliteit, 
+    minimale frequentie en strikte symmetrische filters.
     """
     if df_15m is None or len(df_15m) < 40 or df_1h is None or len(df_1h) < 40:
         return {
@@ -81,7 +81,7 @@ def analyze_advanced_patterns(df_15m, df_1h):
             'pattern_signal': 'none', 
             'recommended_leverage': 1, 
             'recommended_trailing_mult': 1.5,
-            'min_score_required': 85.0,
+            'min_score_required': 88.0,
             'strictness_mode': 'strict',
             'confidence': 0.0
         }
@@ -106,11 +106,11 @@ def analyze_advanced_patterns(df_15m, df_1h):
         bb_upper = sma20 + (std20 * 2)
         bb_lower = sma20 - (std20 * 2)
         bb_width = (bb_upper - bb_lower) / sma20
-        is_squeeze = bb_width.iloc[-1] < bb_width.rolling(window=50).quantile(0.15).iloc[-1]
+        is_squeeze = bb_width.iloc[-1] < bb_width.rolling(window=50).quantile(0.12).iloc[-1]
 
-        # 3. Volume Trend (Strengere eis)
+        # 3. Volume Trend (Extra streng: 2.0x)
         vol_sma = volume.rolling(window=20).mean()
-        is_volume_spike = float(volume.iloc[-1]) > float(vol_sma.iloc[-1]) * 1.8
+        is_volume_spike = float(volume.iloc[-1]) > float(vol_sma.iloc[-1]) * 2.0
 
         # 4. Institutionele Price Action (SMC Sniper)
         recent = df.tail(30)
@@ -119,13 +119,13 @@ def analyze_advanced_patterns(df_15m, df_1h):
         r_closes = recent['close'].values
         r_opens = recent['open'].values
 
-        # Fair Value Gaps (FVG) - Alleen met krachtige impuls body
+        # Fair Value Gaps (FVG) - Strikte disbalans check
         fvg_bullish = False
         fvg_bearish = False
         for i in range(len(recent) - 2):
-            if r_lows[i+2] > r_highs[i] and (r_closes[i+1] - r_opens[i+1]) > (r_highs[i+1] - r_lows[i+1]) * 0.4:
+            if r_lows[i+2] > r_highs[i] and (r_closes[i+1] - r_opens[i+1]) > (r_highs[i+1] - r_lows[i+1]) * 0.5:
                 fvg_bullish = True
-            if r_highs[i+2] < r_lows[i] and (r_opens[i+1] - r_closes[i+1]) > (r_highs[i+1] - r_lows[i+1]) * 0.4:
+            if r_highs[i+2] < r_lows[i] and (r_opens[i+1] - r_closes[i+1]) > (r_highs[i+1] - r_lows[i+1]) * 0.5:
                 fvg_bearish = True
 
         # Liquidity Sweep / Stop Hunt (SFP)
@@ -134,7 +134,7 @@ def analyze_advanced_patterns(df_15m, df_1h):
         sfp_bullish = r_lows[-1] < prev_low and r_closes[-1] > prev_low
         sfp_bearish = r_highs[-1] > prev_high and r_closes[-1] < prev_high
 
-        # Market Structure Shift / BOS (Verplicht voor validatie)
+        # Market Structure Shift / BOS (Harde vereiste)
         bos_bullish = r_closes[-1] > r_highs[-2] and r_closes[-2] > r_closes[-3]
         bos_bearish = r_closes[-1] < r_lows[-2] and r_closes[-2] < r_closes[-3]
 
@@ -158,50 +158,50 @@ def analyze_advanced_patterns(df_15m, df_1h):
     score = 50.0
     signal = 'none'
 
-    # --- STRIKTE SNIPER LOGICA (Symmetrisch & Kwalitatief) ---
-    is_long_setup = (ind_15m['sfp_bullish'] or ind_15m['fvg_bullish'] or ind_15m['rsi'] < 30) and ind_15m['bos_bullish'] and ind_1h['trend'] > -0.01
-    is_short_setup = (ind_15m['sfp_bearish'] or ind_15m['fvg_bearish'] or ind_15m['rsi'] > 70) and ind_15m['bos_bearish'] and ind_1h['trend'] < 0.01
+    # --- ULTIEME SNIPER LOGICA (Symmetrisch & Streng) ---
+    is_long_setup = (ind_15m['sfp_bullish'] or ind_15m['fvg_bullish'] or ind_15m['rsi'] < 28) and ind_15m['bos_bullish'] and ind_1h['trend'] > -0.005
+    is_short_setup = (ind_15m['sfp_bearish'] or ind_15m['fvg_bearish'] or ind_15m['rsi'] > 72) and ind_15m['bos_bearish'] and ind_1h['trend'] < 0.005
 
     if is_long_setup and not is_short_setup:
         signal = 'long'
         score = 75.0
-        if ind_15m['sfp_bullish']: score += 8.0  
-        if ind_15m['fvg_bullish']: score += 7.0  
-        if ind_15m['bos_bullish']: score += 5.0  
-        if ind_15m['is_volume_spike']: score += 8.0
+        if ind_15m['sfp_bullish']: score += 7.0  
+        if ind_15m['fvg_bullish']: score += 6.0  
+        if ind_15m['bos_bullish']: score += 6.0  
+        if ind_15m['is_volume_spike']: score += 9.0
         if ind_15m['is_squeeze']: score += 5.0
 
     elif is_short_setup and not is_long_setup:
         signal = 'short'
         score = 75.0
-        if ind_15m['sfp_bearish']: score += 8.0
-        if ind_15m['fvg_bearish']: score += 7.0
-        if ind_15m['bos_bearish']: score += 5.0
-        if ind_15m['is_volume_spike']: score += 8.0
+        if ind_15m['sfp_bearish']: score += 7.0
+        if ind_15m['fvg_bearish']: score += 6.0
+        if ind_15m['bos_bearish']: score += 6.0
+        if ind_15m['is_volume_spike']: score += 9.0
         if ind_15m['is_squeeze']: score += 5.0
 
     score = min(float(score), 98.0)
 
-    # --- HOGERE DREMPELS ---
+    # --- VERHOOGDE DREMPELS ---
     strictness_mode = 'strict'
-    min_score_required = 85.0  
+    min_score_required = 88.0  
     
     if ind_15m['volatility'] > 0.025:
         strictness_mode = 'flexible'
-        min_score_required = 80.0
+        min_score_required = 83.0
     else:
         strictness_mode = 'strict'
-        min_score_required = 85.0
+        min_score_required = 88.0
 
     leverage = 1
     trailing_mult = 1.5
 
     if signal != 'none' and score >= min_score_required:
-        leverage = 10 if (score >= 90 and ind_15m['is_squeeze']) else 5
+        leverage = 10 if (score >= 92 and ind_15m['is_squeeze']) else 5
         
         if ind_15m['is_squeeze']:
             trailing_mult = 2.0  
-        elif score >= 92:
+        elif score >= 94:
             trailing_mult = 1.2  
         else:
             trailing_mult = 1.5
@@ -285,7 +285,7 @@ def push_state_to_github(filename, data):
 
 
 def run_final_boss_scan():
-    print("--- [Final Boss Sniper Agent] Start marktscan ---")
+    print("--- [Final Boss Ultimate Sniper] Start marktscan ---")
     try:
         exchange.load_markets()
     except Exception as e:
@@ -310,7 +310,7 @@ def run_final_boss_scan():
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print("🚀 Final Boss Sniper Agent Web Service gestart.")
+    print("🚀 Final Boss Ultimate Sniper Agent gestart.")
 
     while True:
         try:
