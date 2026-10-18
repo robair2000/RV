@@ -61,48 +61,48 @@
         "taker_buy_ratio",
         "btc_trend_gap"
     ],
-    "last_trained_timestamp": 1792305943.493906,
+    "last_trained_timestamp": 1792309542.1836674,
     "model_weights": {
-        "xgb": 0.3828650070091229,
-        "cat": 0.3179951348860782,
-        "rf": 0.29913985810479893
+        "xgb": 0.4026165042236009,
+        "cat": 0.3077035275013601,
+        "rf": 0.28967996827503895
     },
     "model_errors": {
-        "xgb": 0.003530060271706259,
-        "cat": 0.004250180167138416,
-        "rf": 0.0045180760696928
+        "xgb": 0.0030928976329763548,
+        "cat": 0.004046920546979632,
+        "rf": 0.004298715417783433
     },
-    "baseline_error": 1.0105028646261365,
-    "last_prediction": 2412.567651366932,
-    "last_prediction_price": 2412.567651366932,
-    "predicted_return_pct": 0.06045561450666469,
-    "direction_probability": 51.66866683959961,
-    "signal": "long",
-    "signal_probability": 51.66866683959961,
-    "holdout_direction_accuracy": 0.5333333333333333,
-    "holdout_classifier_accuracy": 0.6,
+    "baseline_error": 1.0929977023707476,
+    "last_prediction": 2411.1957560182104,
+    "last_prediction_price": 2411.1957560182104,
+    "predicted_return_pct": 0.025958840365980264,
+    "direction_probability": 37.672203063964844,
+    "signal": "none",
+    "signal_probability": 50.0,
+    "holdout_direction_accuracy": 0.4666666666666667,
+    "holdout_classifier_accuracy": 0.5333333333333333,
     "holdout_samples": 15,
-    "atr": 15.376428571428537,
-    "atr_pct": 0.6377323544520381,
-    "last_close": 2411.11,
-    "last_candle_ts": 1792299600,
+    "atr": 14.682857142857074,
+    "atr_pct": 0.6091031226165211,
+    "last_close": 2410.57,
+    "last_candle_ts": 1792303200,
     "data_status": "ok",
-    "stop_loss": 2388.0453571428575,
-    "take_profit": 2449.5510714285715,
-    "updated_at": 1792305943,
+    "stop_loss": 0.0,
+    "take_profit": 0.0,
+    "updated_at": 1792309542,
     "model_errors_pct": {
-        "xgb": 0.3530060271706259,
-        "cat": 0.4250180167138416,
-        "rf": 0.45180760696928
+        "xgb": 0.30928976329763547,
+        "cat": 0.40469205469796315,
+        "rf": 0.42987154177834325
     },
     "model_errors_usd": {
-        "xgb": 8.511363621713679,
-        "cat": 10.247651902789107,
-        "rf": 10.893578392397009
+        "xgb": 7.455646247123812,
+        "cat": 9.755385262932691,
+        "rf": 10.36235442464621
     },
     "model_errors_readable": {
-        "xgb": "8.51 USD (0.35%)",
-        "cat": "10.25 USD (0.43%)",
-        "rf": "10.89 USD (0.45%)"
+        "xgb": "7.46 USD (0.31%)",
+        "cat": "9.76 USD (0.40%)",
+        "rf": "10.36 USD (0.43%)"
     }
 }
