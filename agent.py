@@ -268,7 +268,7 @@ def run_final_boss_scan():
             filename = f'pattern_state_{asset.lower()}_15m.json'
             push_state_to_github(filename, analysis)
             print(f"👑 {asset} Final Boss: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']} | Min.Vereist={analysis['min_score_required']} ({analysis['strictness_mode']}) | Lev={analysis['recommended_leverage']}x")
-        time.sleep(2.0)
+        time.sleep(5.0)
 
 
 if __name__ == '__main__':
