@@ -1,0 +1,78 @@
+{
+    "learning_rate": 0.04,
+    "lookback_window": 100,
+    "current_regime": "trending",
+    "regime_features": {
+        "trending": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ],
+        "sideways": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ]
+    },
+    "active_features": [
+        "return_1",
+        "dist_sma20",
+        "dist_sma50",
+        "RSI",
+        "atr_ratio",
+        "bb_position",
+        "ADX",
+        "MACD_hist",
+        "OBV_slope",
+        "VWAP_dist",
+        "dist_support",
+        "dist_resistance"
+    ],
+    "last_trained_timestamp": 1792339318.7273488,
+    "model_weights": {
+        "xgb": 0.3232485000645119,
+        "cat": 0.33887850551782794,
+        "rf": 0.3378729944176602
+    },
+    "model_errors": {
+        "xgb": null,
+        "cat": null,
+        "rf": null
+    },
+    "baseline_error": 0.9696453215718969,
+    "last_prediction": 0.018868393607486097,
+    "last_prediction_price": 0.018868393607486097,
+    "predicted_return_pct": -0.3254431722868651,
+    "direction_probability": 47.80802536010742,
+    "signal": "short",
+    "signal_probability": 52.19197463989258,
+    "holdout_direction_accuracy": 0.6,
+    "holdout_classifier_accuracy": null,
+    "holdout_samples": 0,
+    "atr": 0.0017642857142857137,
+    "atr_pct": 9.320051316881742,
+    "last_close": 0.01893,
+    "last_candle_ts": 0,
+    "data_status": "ok",
+    "stop_loss": 0.023340714285714284,
+    "take_profit": 0.01010857142857143,
+    "updated_at": 1792339318
+}
