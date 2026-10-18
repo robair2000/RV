@@ -179,7 +179,7 @@ with tab1:
             last_close = state.get('last_close') or current_price
             pred_ret_pct = state.get('predicted_return_pct')
             if pred_ret_pct is None:
-                pred_ret_pct = (predicted_price - last_close) / last_close * 100
+                pred_ret_pct = ((predicted_price - current_price) / current_price) * 100
             skill = state.get('baseline_error')
 
             boss_signal = boss_state.get('pattern_signal', 'none')
