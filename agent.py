@@ -65,27 +65,26 @@ def pull_ranking_from_github():
 # --- CONFIGURATIE V20 S&R & SUPPLY/DEMAND AGENT ---
 def get_combined_trading_assets(top_n=5):
     """
-    Combineert altijd de vaste kern (BTC, ETH, LINK) met de 
-    dynamische Top N uit de V20 ranking scanner (kucoin_best_coins_ranking.csv).
+    Combineert altijd de vaste kern met de geldige top N futures uit de ranking CSV.
     """
-    core_assets = ['BTC', 'ETH', 'LINK']
+    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
-    dynamic_assets = []
+    dynamic_symbols = []
     
     if os.path.exists(ranking_file):
         try:
             df = pd.read_csv(ranking_file)
-            symbols = df['Symbol'].head(top_n).tolist()
-            for s in symbols:
-                asset_name = s.split('/')[0].split(':')[0]
-                if asset_name not in dynamic_assets:
-                    dynamic_assets.append(asset_name)
-            print(f"📈 Dynamische top {top_n} ingeladen voor agent: {dynamic_assets}")
+            if 'Symbol' in df.columns:
+                symbols = df['Symbol'].head(top_n).tolist()
+                for s in symbols:
+                    if s not in dynamic_symbols and ':USDT' in s:
+                        dynamic_symbols.append(s)
+            print(f"📈 Dynamische top {top_n} ingeladen voor agent: {dynamic_symbols}")
         except Exception as e:
             print(f"⚠️ Fout bij lezen van ranking CSV in agent: {e}")
             
-    combined = list(dict.fromkeys(core_assets + dynamic_assets))
-    print(f"🎯 Actieve agent trading scope ({len(combined)} assets): {combined}")
+    combined = list(dict.fromkeys(core_symbols + dynamic_symbols))
+    print(f"🎯 Actieve agent trading scope ({len(combined)} symbols): {combined}")
     return combined
 
 
@@ -375,7 +374,7 @@ def run_final_boss_scan():
     
     # Haal eerst de nieuwste ranking op van GitHub zodat we altijd synchroon lopen
     pull_ranking_from_github()
-    assets = get_combined_trading_assets(top_n=5)
+    symbols = get_combined_trading_assets(top_n=5)
 
     try:
         exchange.load_markets()
@@ -383,10 +382,8 @@ def run_final_boss_scan():
         print(f"Fout bij laden markets: {e}")
         return
 
-    for asset in assets:
-        symbol = resolve_symbol(asset)
-        if not symbol:
-            continue
+    for symbol in symbols:
+        asset = symbol.split('/')[0].split(':')[0]
         
         df_4h = fetch_historical_candles(symbol, '4h', limit=250)
         df_1d = fetch_historical_candles(symbol, '1d', limit=250)
