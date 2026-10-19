@@ -2,7 +2,7 @@
     "state_version": 2,
     "learning_rate": 0.03,
     "lookback_window": 350,
-    "current_regime": "trending",
+    "current_regime": "sideways",
     "regime_features": {
         "trending": [
             "return_1",
@@ -38,7 +38,7 @@
         "funding_rate",
         "orderbook_imbalance"
     ],
-    "last_trained_timestamp": 1792418500.4177139,
+    "last_trained_timestamp": 1792432881.7820764,
     "model_weights": {
         "xgb": 0.3333333333333333,
         "cat": 0.3333333333333333,
@@ -66,5 +66,5 @@
     "data_status": "insufficient_data",
     "stop_loss": 0.0,
     "take_profit": 0.0,
-    "updated_at": 1792418500
+    "updated_at": 1792432881
 }
