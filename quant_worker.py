@@ -59,7 +59,7 @@ def get_combined_trading_symbols(top_n=5):
 
 # limit = hoeveel candles opgehaald worden (gepagineerd); lookback = max. trainingsvenster
 timeframes = {
-    '4h': {'interval': '4h', 'limit': 1500, 'lookback': 1200, 'min_interval_seconds': 3 * 3600},
+    '4h': {'interval': '4h', 'limit': 1500, 'lookback': 1200, 'min_interval_seconds': 60},
     '1d': {'interval': '1d', 'limit': 1000, 'lookback': 800, 'min_interval_seconds': 23 * 3600},
 }
 
