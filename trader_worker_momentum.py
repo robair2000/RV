@@ -107,22 +107,22 @@ TIMEFRAMES = ['4h', '1d']
 
 # --- CONFIGURATIE TWM (SNIPER SPECIFIEK) ---
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
-MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 78.0))       # Lichte verlaging voor maximale alertheid
-MIN_VOLUME_EXPANSION = float(os.environ.get('MIN_VOLUME_EXPANSION', 1.30)) # Volume-piek trigger
-COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 3600))  # 1 uur cooldown na trade
+MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 78.0))       
+MIN_VOLUME_EXPANSION = float(os.environ.get('MIN_VOLUME_EXPANSION', 1.30)) 
+COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 3600))  
 
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 
 MAX_CONCURRENT_POSITIONS = 2
-TP_ATR_MULT_BASE = 8.0  # Ruime Take Profit voor Explosive Moves
-TRAILING_SL_MULT = 3.0  # Robuuste Trailing Stop
+TP_ATR_MULT_BASE = 8.0  
+TRAILING_SL_MULT = 2.5  
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 
 active_trades = {}
 symbol_cooldowns = {}
 
-# GEBRUIK NU STRICT KUCOIN FUTURES VOOR CORRECTE SWAP ENDPOINTS
+# GEBRUIK STRICT KUCOIN FUTURES VOOR CORRECTE SWAP ENDPOINTS
 exchange = ccxt.kucoinfutures({
     'apiKey': os.getenv('KUCOIN_API_KEY', ''),
     'secret': os.getenv('KUCOIN_API_SECRET', ''),
@@ -213,7 +213,7 @@ def pull_latest_states_from_github(symbols):
             pass
 
 
-MAX_PATTERN_AGE_SECONDS = 8 * 3600  # Maximaal 8 uur oud
+MAX_PATTERN_AGE_SECONDS = 8 * 3600  
 
 def load_pattern_state(asset):
     path = f'pattern_state_{asset.lower()}_4h.json'
@@ -225,7 +225,6 @@ def load_pattern_state(asset):
     except Exception:
         return None
         
-    # KRITISCHE CHECK: Is de agent gestopt of is het bestand te oud?
     updated_at = float(pst.get('updated_at', 0) or 0)
     if time.time() - updated_at > MAX_PATTERN_AGE_SECONDS:
         print(f"⚠️ Waarschuwing: Pattern state voor {asset} is te oud ({int((time.time() - updated_at)/3600)} uur). Agent lijkt inactief!")
@@ -261,21 +260,18 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
     try:
         close_side = 'sell' if side == 'long' else 'buy'
         
-        # 1. Plaats direct de nieuwe Stop Loss order
         new_order = exchange.create_order(symbol, 'stop', close_side, contracts, None, {
             'stopPrice': new_sl,
             'reduceOnly': True
         })
         new_order_id = new_order.get('id') if new_order else None
 
-        # 2. Annuleer ALLEEN de specifieke oude SL-order (indien ID bekend) of filter strict op SL
         open_orders = exchange.fetch_open_orders(symbol)
         for o in open_orders:
             order_id = o.get('id')
             order_type = str(o.get('type', '')).lower()
             info_str = str(o.get('info', {})).lower()
             
-            # Als we een specifiek oud SL-order ID hebben, annuleer alleen die
             if old_sl_order_id and order_id == old_sl_order_id:
                 try:
                     exchange.cancel_order(order_id, symbol)
@@ -283,12 +279,7 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
                     pass
                 continue
             
-            # Anders: zoek op basis van kenmerken, maar BLIJF AF van Take Profit orders!
-            # Op KuCoin kun je vaak herkennen of het een stop-loss is t.o.v. take-profit 
-            # door te kijken naar de trigger price ten opzichte van de huidige marktprijs.
             if order_id != new_order_id and ('stop' in order_type or 'stop' in info_str):
-                # Extra veiligheid: zorg dat we geen TP orders raken (een TP ligt *boven* entry voor long, SL *onder*)
-                # Om het simpel en robuust te houden slaan we orders over die expliciet als Take Profit zijn gemarkeerd.
                 if 'take profit' in info_str or 'tp' in info_str:
                     continue
                 
@@ -331,7 +322,13 @@ def manage_open_positions_and_trailing_stops(symbols):
         trade = active_trades.get(symbol)
         if trade is None:
             trail_mult = TRAILING_SL_MULT
-            atr = entry * 0.02  # Standaard 2% ATR fallback
+            
+            # Dynamische ATR ophalen via opgeslagen state of veilige fallback van 2%
+            asset = symbol.split('/')[0].split(':')[0]
+            pst = load_pattern_state(asset)
+            atr_pct = float(pst.get('atr_pct', 2.0)) if pst else 2.0
+            atr = entry * (atr_pct / 100.0)
+            
             sgn = 1 if side == 'long' else -1
             tp_mult = TP_ATR_MULT_BASE
             trade = active_trades[symbol] = {
@@ -384,12 +381,9 @@ def manage_open_positions_and_trailing_stops(symbols):
         if trade['sl'] != old_sl:
             update_exchange_stop_loss(symbol, side, contracts, trade['sl'])
             
-       if stop_hit or tp_hit:
+        if stop_hit or tp_hit:
             if close_position(symbol, side, contracts):
-                # ZET ALTIJD EEN COOLDOWN NA EEN GESLOTEN TRADE (Zowel winst als verlies!)
-                # Dit voorkomt instant re-entry op dezelfde stale 4h candle/signaal.
                 symbol_cooldowns[symbol] = time.time()
-                
                 active_trades.pop(symbol, None)
                 state_changed = True
 
@@ -485,8 +479,11 @@ def evaluate_and_trade_sniper(asset, symbol):
     
     vol_expansion = float(pattern_st.get('volume_expansion_ratio', 1.0))
     is_squeeze = bool(pattern_st.get('is_bollinger_squeeze', False))
+    
+    # Haal de werkelijke dynamische ATR-percentage op uit de agent status!
+    atr_pct = float(pattern_st.get('atr_pct', 2.0))
 
-    print(f"   🎯 TWM Sniper Check {symbol}: Signal={boss_signal.upper()} | Score={boss_score} | VolRatio={vol_expansion} | Squeeze={is_squeeze}")
+    print(f"   🎯 TWM Sniper Check {symbol}: Signal={boss_signal.upper()} | Score={boss_score} | VolRatio={vol_expansion} | Squeeze={is_squeeze} | ATR%={atr_pct}")
 
     if boss_signal not in ('long', 'short') or boss_score < MIN_BOSS_SCORE:
         return
@@ -500,7 +497,9 @@ def evaluate_and_trade_sniper(asset, symbol):
     except Exception:
         return
 
-    atr = price * 0.02
+    # Dynamische ATR berekening op basis van echte marktomstandigheden
+    atr = price * (atr_pct / 100.0)
+    
     is_long = (boss_signal == 'long')
     sgn = 1 if is_long else -1
     stop_loss_val = price - sgn * TRAILING_SL_MULT * atr
@@ -515,7 +514,7 @@ def evaluate_and_trade_sniper(asset, symbol):
 
     side = 'buy' if is_long else 'sell'
     if DRY_RUN:
-        print(f"   🧪 [DRY RUN] Zou order plaatsen: {side} {amount}x {symbol} @ {price}")
+        print(f"   🧪 [DRY RUN] Zou order plaatsen: {side} {amount}x {symbol} @ {price} (SL: {stop_loss_val:.2f}, TP: {take_profit_val:.2f})")
         return
 
     params = {
