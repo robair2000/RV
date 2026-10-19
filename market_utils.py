@@ -1,7 +1,11 @@
 """Gedeelde marktdata-helpers (agent.py, quant_worker.py, backtest.py)."""
+import os
+import json
 import time
 
 import pandas as pd
+
+from github_utils import github_pull, github_put
 
 TF_MS = {
     '1h': 3_600_000,
@@ -53,3 +57,55 @@ def fetch_ohlcv_paginated(exchange, symbol, timeframe, total_bars, page_limit=20
     if len(df) > 0 and df['timestamp'].iloc[-1] + step > now_ms:
         df = df.iloc[:-1].reset_index(drop=True)
     return df.tail(int(total_bars)).reset_index(drop=True)
+
+
+def fetch_cached_1d_shared(exchange, symbol, asset, total_bars=450, max_age_seconds=86400):
+    """Haalt 1d candles op via een gedeelde lokale cache (en optioneel GitHub) om rate limits te voorkomen."""
+    cache_file = f"shared_cache_1d_{asset.lower()}.json"
+    now = time.time()
+
+    # 1. Probeer lokaal te laden
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cached = json.load(f)
+            if now - cached.get('timestamp', 0) < max_age_seconds:
+                df = pd.DataFrame(cached['data'])
+                if not df.empty:
+                    return df
+        except Exception:
+            pass
+
+    # 2. Indien niet lokaal vers, probeer te pullen van GitHub voor het geval de Quant Worker het heeft geupdate
+    if os.environ.get('GITHUB_TOKEN'):
+        try:
+            if github_pull(cache_file, min_interval=3600, agent='shared-cache'):
+                if os.path.exists(cache_file):
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        cached = json.load(f)
+                    if now - cached.get('timestamp', 0) < max_age_seconds:
+                        df = pd.DataFrame(cached['data'])
+                        if not df.empty:
+                            return df
+        except Exception:
+            pass
+
+    # 3. Als het echt nergens vers is, haal vers op via de API
+    df = fetch_ohlcv_paginated(exchange, symbol, '1d', total_bars=total_bars)
+    if not df.empty:
+        try:
+            payload = {
+                'timestamp': now,
+                'data': df.to_dict(orient='records')
+            }
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(payload, f)
+            
+            # Direct pushen naar GitHub zodat de andere worker (of agent) het ook direct heeft
+            if os.environ.get('GITHUB_TOKEN'):
+                with open(cache_file, 'rb') as f_bin:
+                    github_put(cache_file, f_bin.read(), message=f"Auto-update {cache_file} [skip ci]", agent='shared-cache')
+        except Exception as e:
+            print(f"⚠️ Kon 1d cache niet wegschrijven/pushten voor {asset}: {e}")
+
+    return df
