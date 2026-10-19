@@ -81,7 +81,7 @@ def pull_ranking_from_github():
 
 
 def get_combined_trading_assets(top_n=5):
-    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'LINK/USDT:USDT']
+    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_symbols = []
     
@@ -101,7 +101,7 @@ def get_combined_trading_assets(top_n=5):
 
 TIMEFRAMES = ['4h', '1d']
 
-# --- CONFIGURATIE FUTURES SWING TRADING (Instelbaar via Render Env Vars) ---
+# --- CONFIGURATIE FUTURES SWING TRADING ---
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
 MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 84.0))
 COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 7200))
@@ -117,7 +117,6 @@ MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 active_trades = {}
 symbol_cooldowns = {}
 
-# GEBRUIK NU STRICT KUCOIN FUTURES VOOR CORRECTE SWAP ENDPOINTS
 exchange = ccxt.kucoinfutures({
     'apiKey': os.getenv('KUCOIN_API_KEY', ''),
     'secret': os.getenv('KUCOIN_API_SECRET', ''),
@@ -226,7 +225,7 @@ def load_state(asset, tf):
     return st
 
 
-MAX_PATTERN_AGE_SECONDS = 8 * 3600  # Maximaal 8 uur oud
+MAX_PATTERN_AGE_SECONDS = 8 * 3600  
 
 def load_pattern_state(asset):
     path = f'pattern_state_{asset.lower()}_4h.json'
@@ -238,7 +237,6 @@ def load_pattern_state(asset):
     except Exception:
         return None
         
-    # KRITISCHE CHECK: Is de agent gestopt of is het bestand te oud?
     updated_at = float(pst.get('updated_at', 0) or 0)
     if time.time() - updated_at > MAX_PATTERN_AGE_SECONDS:
         print(f"⚠️ Waarschuwing: Pattern state voor {asset} is te oud ({int((time.time() - updated_at)/3600)} uur). Agent lijkt inactief!")
@@ -255,7 +253,9 @@ def close_position(symbol, side, contracts):
         try:
             open_orders = exchange.fetch_open_orders(symbol)
             for o in open_orders:
-                exchange.cancel_order(o['id'], symbol)
+                # Annuleer uitsluitend eigen V20 orders
+                if 'v20_' in str(o.get('clientOrderId', '')):
+                    exchange.cancel_order(o['id'], symbol)
         except Exception:
             pass
 
@@ -274,37 +274,31 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
     try:
         close_side = 'sell' if side == 'long' else 'buy'
         
-        # 1. Plaats direct de nieuwe Stop Loss order
+        client_order_id = f"v20_sl_{int(time.time() * 1000)}"
         new_order = exchange.create_order(symbol, 'stop', close_side, contracts, None, {
             'stopPrice': new_sl,
-            'reduceOnly': True
+            'reduceOnly': True,
+            'clientOrderId': client_order_id
         })
         new_order_id = new_order.get('id') if new_order else None
 
-        # 2. Annuleer ALLEEN de specifieke oude SL-order (indien ID bekend) of filter strict op SL
+        if old_sl_order_id:
+            try:
+                exchange.cancel_order(old_sl_order_id, symbol)
+            except Exception:
+                pass
+
+        # Veiligheidsfilter: annuleer uitsluitend eigen V20 stop-loss orders
         open_orders = exchange.fetch_open_orders(symbol)
         for o in open_orders:
             order_id = o.get('id')
-            order_type = str(o.get('type', '')).lower()
+            c_id = str(o.get('clientOrderId', ''))
             info_str = str(o.get('info', {})).lower()
             
-            # Als we een specifiek oud SL-order ID hebben, annuleer alleen die
-            if old_sl_order_id and order_id == old_sl_order_id:
-                try:
-                    exchange.cancel_order(order_id, symbol)
-                except Exception:
-                    pass
+            if 'take profit' in info_str or 'tp' in info_str:
                 continue
             
-            # Anders: zoek op basis van kenmerken, maar BLIJF AF van Take Profit orders!
-            # Op KuCoin kun je vaak herkennen of het een stop-loss is t.o.v. take-profit 
-            # door te kijken naar de trigger price ten opzichte van de huidige marktprijs.
-            if order_id != new_order_id and ('stop' in order_type or 'stop' in info_str):
-                # Extra veiligheid: zorg dat we geen TP orders raken (een TP ligt *boven* entry voor long, SL *onder*)
-                # Om het simpel en robuust te houden slaan we orders over die expliciet als Take Profit zijn gemarkeerd.
-                if 'take profit' in info_str or 'tp' in info_str:
-                    continue
-                
+            if order_id != new_order_id and 'v20_' in c_id:
                 try:
                     exchange.cancel_order(order_id, symbol)
                 except Exception:
@@ -312,7 +306,7 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
                     
         return new_order_id
     except Exception as e:
-        print(f"⚠️ Kon exchange stop-loss niet bijwerken voor {symbol}: {e}")
+        print(f"⚠️ Kon V20 exchange stop-loss niet bijwerken voor {symbol}: {e}")
         return None
 
 
@@ -403,10 +397,7 @@ def manage_open_positions_and_trailing_stops(symbols):
             
         if stop_hit or tp_hit:
             if close_position(symbol, side, contracts):
-                # ZET ALTIJD EEN COOLDOWN NA EEN GESLOTEN TRADE (Zowel winst als verlies!)
-                # Dit voorkomt instant re-entry op dezelfde stale 4h candle/signaal.
                 symbol_cooldowns[symbol] = time.time()
-                
                 active_trades.pop(symbol, None)
                 state_changed = True
                 
@@ -573,6 +564,7 @@ def evaluate_and_trade(asset, symbol):
         'stopLoss': {'triggerPrice': stop_loss_val},
         'takeProfit': {'triggerPrice': take_profit_val},
         'marginMode': DESIRED_MARGIN_MODE,
+        'clientOrderId': f"v20_entry_{int(time.time() * 1000)}"
     }
     try:
         order = execute_with_retry(lambda: exchange.create_order(symbol, 'limit', side, amount, limit_price, params))
