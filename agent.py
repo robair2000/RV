@@ -16,7 +16,7 @@ import xgboost as xgb
 from sklearn.metrics import roc_auc_score
 
 from github_utils import github_pull, github_put
-from market_utils import TF_MS, fetch_ohlcv_paginated
+from market_utils import TF_MS, fetch_ohlcv_paginated, fetch_cached_1d_shared
 
 
 # --- RENDER WEB SERVER ---
@@ -514,7 +514,9 @@ def get_meta_pack(symbols, force=False):
     for symbol in symbols:
         asset = symbol.split('/')[0].split(':')[0]
         d4 = fetch_ohlcv_paginated(exchange, symbol, '4h', META_HISTORY_4H)
-        d1 = fetch_ohlcv_paginated(exchange, symbol, '1d', META_HISTORY_1D)
+        time.sleep(2.0)
+        d1 = fetch_cached_1d_shared(exchange, symbol, asset, total_bars=META_HISTORY_1D)
+        time.sleep(2.0)
         if len(d4) >= 250 and len(d1) >= 60:
             histories[asset] = (d4, d1)
         else:
@@ -666,9 +668,10 @@ def run_final_boss_scan():
     for symbol in symbols:
         asset = symbol.split('/')[0].split(':')[0]
         d4 = fetch_historical_candles(symbol, '4h', limit=250)
-        d1 = fetch_historical_candles(symbol, '1d', limit=250)
+        time.sleep(1.5)
+        d1 = fetch_cached_1d_shared(exchange, symbol, asset, total_bars=250)
         live[asset] = (d4, d1)
-        time.sleep(1.0)
+        time.sleep(2.5)
 
     meta_pack = get_meta_pack(symbols)
 
