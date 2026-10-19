@@ -304,10 +304,11 @@ def usable_features(df, feats):
 
 def build_dataset(df, feats, lookback):
     d = df.dropna(subset=feats + ['close', 'ATR']).reset_index(drop=True)
-    if len(d) < lookback + 5:
+    if len(d) < lookback + 10:
         return None
-    X = d[feats].iloc[:-1]
-    y = (d['close'].shift(-3) / d['close'] - 1.0).iloc[:-1] # 3-bar forward return voor robuustheid
+    # Snijd de laatste 3 rijen af omdat shift(-3) daar NaN oplevert
+    X = d[feats].iloc[:-3]
+    y = (d['close'].shift(-3) / d['close'] - 1.0).iloc[:-3]
     X = X.iloc[-lookback:]
     y = y.iloc[-lookback:]
     latest = d[feats].iloc[[-1]]
