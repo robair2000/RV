@@ -21,7 +21,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
             
             html = "<html><head><title>TWM - Live Explosive Reversal Dashboard</title></head><body style='font-family: Arial; padding: 20px; background-color: #0f172a; color: #f8fafc;'>"
-            html += "<h2 style='color: #38bdf8;'>🚀 TWM - Explosive Reversal Hunter (Live Scanner)</h2>"
+            html += "<h2 style='color: #38bdf8;'>🚀 TWM - Reversal Sniper (Pure S&R, Volume & Squeeze Mode)</h2>"
             
             ranking_file = 'kucoin_best_coins_ranking.csv'
             if os.path.exists(ranking_file):
@@ -71,7 +71,7 @@ def pull_ranking_from_github():
     filename = 'kucoin_best_coins_ranking.csv'
     token = os.environ.get('GITHUB_TOKEN', '')
     url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
-    headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'twm-reversal-worker'}
+    headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'twm-sniper-worker'}
     if token:
         headers['Authorization'] = f'Bearer {token}'
     try:
@@ -105,9 +105,10 @@ def get_combined_trading_assets(top_n=5):
 
 TIMEFRAMES = ['4h', '1d']
 
-# --- CONFIGURATIE TWM (EXPLOSIVE REVERSAL & S&R BOUNCE SPECIFIEK) ---
+# --- CONFIGURATIE TWM (SNIPER SPECIFIEK) ---
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
-MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 80.0))
+MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 78.0))       # Lichte verlaging voor maximale alertheid
+MIN_VOLUME_EXPANSION = float(os.environ.get('MIN_VOLUME_EXPANSION', 1.30)) # Volume-piek trigger
 COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 3600))  # 1 uur cooldown na trade
 
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
@@ -115,8 +116,7 @@ DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
 MAX_CONCURRENT_POSITIONS = 2
-MIN_RRR = 3.5
-TP_ATR_MULT_BASE = 8.0  # Ruime Take Profit voor Explosive Big Moves
+TP_ATR_MULT_BASE = 8.0  # Ruime Take Profit voor Explosive Moves
 TRAILING_SL_MULT = 3.0  # Robuuste Trailing Stop
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 
@@ -164,7 +164,7 @@ def push_trader_status_to_github():
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "twm-reversal-worker"
+        "User-Agent": "twm-sniper-worker"
     }
 
     sha = None
@@ -197,13 +197,11 @@ def pull_latest_states_from_github(symbols):
     files_to_pull = []
     for symbol in symbols:
         asset = symbol.split('/')[0].split(':')[0]
-        for tf in TIMEFRAMES:
-            files_to_pull.append(f'model_state_{asset.lower()}_{tf}.json')
-            files_to_pull.append(f'pattern_state_{asset.lower()}_4h.json')
+        files_to_pull.append(f'pattern_state_{asset.lower()}_4h.json')
 
     for filename in set(files_to_pull):
         url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
-        headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'twm-reversal-worker'}
+        headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'twm-sniper-worker'}
         if token:
             headers['Authorization'] = f'Bearer {token}'
         try:
@@ -214,22 +212,6 @@ def pull_latest_states_from_github(symbols):
             os.replace(filename + '.tmp', filename)
         except Exception:
             pass
-
-
-def load_state(asset, tf):
-    path = f'model_state_{asset.lower()}_{tf}.json'
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            st = json.load(f)
-    except Exception:
-        return None
-    if st.get('data_status') != 'ok' or st.get('signal') not in ('long', 'short', 'none'):
-        return None
-    if time.time() - float(st.get('updated_at', 0) or 0) > MAX_STATE_AGE_SECONDS.get(tf, 86400):
-        return None
-    return st
 
 
 def load_pattern_state(asset):
@@ -283,7 +265,7 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl):
                 except Exception:
                     pass
     except Exception as e:
-        print(f"⚠️ TWM Reversal: Kon stop-loss niet bijwerken voor {symbol}: {e}")
+        print(f"⚠️ TWM Sniper: Kon stop-loss niet bijwerken voor {symbol}: {e}")
 
 
 def manage_open_positions_and_trailing_stops(symbols):
@@ -313,11 +295,8 @@ def manage_open_positions_and_trailing_stops(symbols):
 
         trade = active_trades.get(symbol)
         if trade is None:
-            base = symbol.split('/')[0].split(':')[0]
-            st = load_state(base, '4h')
             trail_mult = TRAILING_SL_MULT
-
-            atr = entry * float(st['atr_pct']) / 100.0 if (st and st.get('atr_pct')) else entry * 0.02
+            atr = entry * 0.02  # Standaard 2% ATR fallback
             sgn = 1 if side == 'long' else -1
             tp_mult = TP_ATR_MULT_BASE
             trade = active_trades[symbol] = {
@@ -336,7 +315,6 @@ def manage_open_positions_and_trailing_stops(symbols):
         distance_in_atr = sgn * (price - entry) / atr if atr > 0 else 0.0
         old_sl = trade['sl']
 
-        # Breakeven beveiliging bij 2.0 ATR winst
         if distance_in_atr >= 2.0 and not trade.get('breakeven_secured', False):
             if side == 'long' and trade['sl'] < entry:
                 trade['sl'] = entry
@@ -347,7 +325,6 @@ def manage_open_positions_and_trailing_stops(symbols):
                 trade['breakeven_secured'] = True
                 state_changed = True
 
-        # Dynamische Trailing Stop op Reversal tempo
         if side == 'long':
             if price > trade['peak']:
                 trade['peak'] = price
@@ -400,9 +377,8 @@ def ensure_margin_and_leverage(symbol, target_leverage):
         return False
 
 
-def compute_contract_amount(asset, symbol, price, leverage):
+def compute_contract_amount(symbol, price, leverage):
     target_notional = TRADE_AMOUNT_USDT * leverage
-
     try:
         market_info = exchange.market(symbol)
         contract_size = float(market_info.get('contractSize') or 1.0)
@@ -417,14 +393,13 @@ def compute_contract_amount(asset, symbol, price, leverage):
 
     lots = math.floor(target_notional / per_contract_notional)
     if lots < max(1, min_amount):
-        print(f"⚠️ TWM Reversal {symbol}: Contractgrootte te klein ({lots} contracten). Verhoog TRADE_AMOUNT_USDT.")
         return None
 
     return float(lots)
 
 
 def execute_live_trades_scan(symbols):
-    print(f"🚀 [TWM Explosive Reversal Hunter] Start marktscan op: {symbols}")
+    print(f"🚀 [TWM Reversal Sniper] Start marktscan op: {symbols}")
     current_time = time.time()
     expired_cooldowns = [sym for sym, ts in symbol_cooldowns.items() if current_time - ts > COOLDOWN_SECONDS]
     for sym in expired_cooldowns:
@@ -434,9 +409,8 @@ def execute_live_trades_scan(symbols):
     try:
         exchange.load_markets()
         positions = execute_with_retry(lambda: exchange.fetch_positions())
-        open_orders = execute_with_retry(lambda: exchange.fetch_open_orders())
     except Exception as e:
-        print(f"⚠️ TWM Reversal: Fout bij ophalen posities/orders van KuCoin: {e}")
+        print(f"⚠️ TWM Sniper: Fout bij ophalen posities: {e}")
         return
 
     active_symbols = set()
@@ -445,74 +419,62 @@ def execute_live_trades_scan(symbols):
             active_symbols.add(p.get('symbol'))
 
     if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
-        print(f"ℹ️ TWM Reversal: Maximaal aantal actieve posities bereikt ({len(active_symbols)}/{MAX_CONCURRENT_POSITIONS}).")
         return
 
     for symbol in symbols:
         if symbol not in exchange.markets or symbol in active_symbols or symbol in symbol_cooldowns:
-            continue
-        if current_time - symbol_cooldowns.get(symbol, 0) < COOLDOWN_SECONDS:
-            continue
-        try:
-            asset = symbol.split('/')[0].split(':')[0]
-            print(f"🔎 TWM Reversal Evalueren van {symbol} (Asset: {asset})...")
-            evaluate_and_trade_reversal(asset, symbol)
-        except Exception as e:
-            print(f"⚠️ TWM Reversal: Fout bij evalueren van {symbol}: {e}")
+            try:
+                asset = symbol.split('/')[0].split(':')[0]
+                evaluate_and_trade_sniper(asset, symbol)
+            except Exception as e:
+                print(f"⚠️ TWM Sniper fout bij {symbol}: {e}")
 
 
-def evaluate_and_trade_reversal(asset, symbol):
-    state_4h = load_state(asset, '4h')
-    if state_4h is None:
-        print(f"   ⏳ TWM Reversal {symbol}: Geen geldige 4h state gevonden.")
-        return
-
-    quant_signal = state_4h['signal']
-    if quant_signal not in ('long', 'short'):
-        print(f"   ℹ️ TWM Reversal {symbol}: Quant signaal is neutraal ('{quant_signal}').")
-        return
-
-    price = float(exchange.fetch_ticker(symbol)['last'])
-    atr_pct = float(state_4h.get('atr_pct') or 0.0)
-    if atr_pct <= 0:
-        return
-    atr = price * atr_pct / 100.0
-
+def evaluate_and_trade_sniper(asset, symbol):
     pattern_st = load_pattern_state(asset)
     if pattern_st is None:
-        print(f"   ⏳ TWM Reversal {symbol}: Geen S&R pattern state gevonden voor 4h.")
         return
 
     boss_signal = pattern_st.get('pattern_signal', 'none')
     boss_score = pattern_st.get('pattern_score', 50.0)
     boss_leverage = int(pattern_st.get('recommended_leverage', 2))
+    
+    vol_expansion = float(pattern_st.get('volume_expansion_ratio', 1.0))
+    is_squeeze = bool(pattern_st.get('is_bollinger_squeeze', False))
 
-    print(f"   🎯 TWM Reversal {symbol}: Quant={quant_signal.upper()} | Boss={boss_signal.upper()} | Score={boss_score} (Vereist: >={MIN_BOSS_SCORE})")
+    print(f"   🎯 TWM Sniper Check {symbol}: Signal={boss_signal.upper()} | Score={boss_score} | VolRatio={vol_expansion} | Squeeze={is_squeeze}")
 
-    # TWM REVERSAL EIS: Confluence tussen de S&R Agent en Quant Model (zonder strenge ADX trend filter)
-    if boss_signal != quant_signal or boss_score < MIN_BOSS_SCORE:
-        print(f"   🚫 TWM Reversal {symbol}: VETO - Signalen komen niet overeen of score is te laag.")
+    # PURE SNIPER EISEN:
+    # 1. Er moet een geldig signaal zijn ('long' of 'short') met voldoende Boss Score.
+    if boss_signal not in ('long', 'short') or boss_score < MIN_BOSS_SCORE:
         return
 
-    is_long = (quant_signal == 'long')
+    # 2. Er moet sprake zijn van een volume-expansie of een Bollinger Squeeze uitbraak!
+    if vol_expansion < MIN_VOLUME_EXPANSION and not is_squeeze:
+        print(f"   🚫 TWM Sniper VETO {symbol}: Geen volume-piek ({vol_expansion}) en geen Bollinger Squeeze.")
+        return
 
-    # Agressieve Market Order Instap om de Explosive Reversal direct te vangen
-    market_entry_price = price
+    try:
+        price = float(exchange.fetch_ticker(symbol)['last'])
+    except Exception:
+        return
+
+    atr = price * 0.02  # Standaard schatting op basis van koers
+    is_long = (boss_signal == 'long')
     sgn = 1 if is_long else -1
-    stop_loss_val = market_entry_price - sgn * TRAILING_SL_MULT * atr
-    take_profit_val = market_entry_price + sgn * TP_ATR_MULT_BASE * atr
+    stop_loss_val = price - sgn * TRAILING_SL_MULT * atr
+    take_profit_val = price + sgn * TP_ATR_MULT_BASE * atr
 
     if not ensure_margin_and_leverage(symbol, boss_leverage):
-        print(f"   ⚠️ TWM Reversal {symbol}: Kon hefboom/margin mode niet instellen.")
         return
         
-    amount = compute_contract_amount(asset, symbol, market_entry_price, boss_leverage)
+    amount = compute_contract_amount(symbol, price, boss_leverage)
     if amount is None:
         return
 
     side = 'buy' if is_long else 'sell'
     if DRY_RUN:
-        print(f"   🧪 [DRY RUN TWM REVERSAL] Zou MARKET order plaatsen: {side} {amount}x {symbol} op marktprijs {market_entry_price}")
+        print(f"   🧪 [DRY RUN] Zou order plaatsen: {side} {amount}x {symbol} @ {price}")
         return
 
     params = {
@@ -522,29 +484,28 @@ def evaluate_and_trade_reversal(asset, symbol):
     }
     try:
         order = execute_with_retry(lambda: exchange.create_order(symbol, 'market', side, amount, None, params))
-        print(f"   🚀 TWM REVERSAL SUCCES: Market Order uitgevoerd voor {symbol} ({side} {amount} contracten @ {market_entry_price})!")
+        print(f"   🚀 TWM SNIPER RAAK: Order geplaatst voor {symbol} ({side} {amount} contracten @ {price})!")
         active_trades[symbol] = {
             'side': 'long' if is_long else 'short', 
-            'entry': market_entry_price, 'peak': market_entry_price, 'atr': atr,
+            'entry': price, 'peak': price, 'atr': atr,
             'sl': stop_loss_val, 'tp': take_profit_val,
             'trailing_mult': TRAILING_SL_MULT,
             'breakeven_secured': False,
         }
         push_trader_status_to_github()
     except Exception as e:
-        print(f"   ❌ TWM Reversal Fout bij plaatsen market order voor {symbol}: {e}")
+        print(f"   ❌ TWM orderfout voor {symbol}: {e}")
 
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print("🚀 TWM (Explosive Reversal Hunter) gestart op Render (scan interval: 60 seconden).")
+    print("🚀 TWM (Reversal Sniper Mode) gestart op Render.")
     while True:
         try:
             pull_ranking_from_github()
             current_symbols = get_combined_trading_assets(top_n=5)
-
             manage_open_positions_and_trailing_stops(current_symbols)
             execute_live_trades_scan(current_symbols)
         except Exception as e:
-            print(f"⚠️ TWM Reversal: Fout in reversal trader lus: {e}")
+            print(f"⚠️ TWM sniper lus fout: {e}")
         time.sleep(60)
