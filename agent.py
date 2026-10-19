@@ -16,6 +16,7 @@ import ccxt
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+from sklearn.metrics import roc_auc_score
 
 
 # --- RENDER WEB SERVER ---
@@ -62,7 +63,7 @@ def pull_ranking_from_github():
 
 
 MIN_ADX_TREND = float(os.environ.get('MIN_ADX_TREND', 18.0))
-MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 84.0))
+MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 78.0))
 
 def get_combined_trading_assets(top_n=5):
     core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
@@ -98,10 +99,7 @@ def fetch_historical_candles(symbol, timeframe, limit=250):
         if not ohlcv or len(ohlcv) < 5:
             return pd.DataFrame()
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        
-        # KRITISCHE FIX: Verwijder altijd de huidige, incomplete (lopende) candle om repainting te voorkomen
         df = df.iloc[:-1].reset_index(drop=True)
-        
         return df
     except Exception as e:
         print(f"⚠️ Fout bij ophalen candles voor {symbol} ({timeframe}): {e}")
@@ -155,6 +153,13 @@ def compute_smart_indicators(df):
     vol_expansion_ratio = float(current_vol / avg_vol)
     is_vol_expansion = vol_expansion_ratio > 1.35
 
+    # RSI Berekening voor TWM Reversal logica
+    delta = close.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / (loss + 1e-8)
+    rsi = 100 - (100 / (1 + rs))
+
     return {
         'close': float(close.iloc[-1]),
         'ema9': float(ema9.iloc[-1]),
@@ -163,6 +168,7 @@ def compute_smart_indicators(df):
         'adx': float(adx.iloc[-1]) if not math.isnan(adx.iloc[-1]) else 0.0,
         'macd_hist': float(macd_hist.iloc[-1]),
         'pct_b': float(pct_b.iloc[-1]),
+        'rsi': float(rsi.iloc[-1]) if not math.isnan(rsi.iloc[-1]) else 50.0,
         'volume_expansion_ratio': round(vol_expansion_ratio, 2),
         'is_volume_expansion': bool(is_vol_expansion),
         'is_bollinger_squeeze': bool(is_bb_squeeze)
@@ -215,13 +221,12 @@ def detect_support_resistance_and_sd(df):
 
 def train_meta_classifier(df, direction='long'):
     df = df.copy()
-    
     df['returns'] = df['close'].pct_change(3).shift(-3)
     
     if direction == 'long':
-        df['target'] = (df['returns'] > 0.005).astype(int)
+        df['target'] = (df['returns'] > 0.008).astype(int)
     else:
-        df['target'] = (df['returns'] < -0.005).astype(int)
+        df['target'] = (df['returns'] < -0.008).astype(int)
     
     sma20 = df['close'].rolling(20).mean()
     atr = (df['high'] - df['low']).rolling(14).mean()
@@ -233,8 +238,8 @@ def train_meta_classifier(df, direction='long'):
     feats = ['feat_sma_dist', 'feat_atr_pct', 'feat_vol_ratio']
     df_clean = df.dropna(subset=feats + ['target']).iloc[:-3].reset_index(drop=True)
     
-    if len(df_clean) < 40:
-        return 0.5
+    if len(df_clean) < 60:
+        return 0.5, 0.5
     
     X = df_clean[feats]
     y = df_clean['target']
@@ -243,22 +248,27 @@ def train_meta_classifier(df, direction='long'):
     X_tr, X_va = X.iloc[:split_idx], X.iloc[split_idx:]
     y_tr, y_va = y.iloc[:split_idx], y.iloc[split_idx:]
     
-    if len(X_tr) < 20 or len(X_va) < 5:
-        return 0.5
+    if len(X_tr) < 30 or len(X_va) < 10:
+        return 0.5, 0.5
         
     model = xgb.XGBClassifier(
-        n_estimators=40, 
+        n_estimators=50, 
         max_depth=3, 
-        learning_rate=0.03, 
+        learning_rate=0.02, 
         subsample=0.8,
         colsample_bytree=0.8,
         random_state=42, 
         verbosity=0
     )
     
-    eval_set = [(X_va, y_va)]
-    model.fit(X_tr, y_tr, eval_set=eval_set, verbose=False)
+    model.fit(X_tr, y_tr)
     
+    try:
+        va_preds = model.predict_proba(X_va)[:, 1]
+        val_auc = float(roc_auc_score(y_va, va_preds))
+    except Exception:
+        val_auc = 0.5
+        
     latest_feat = pd.DataFrame([{
         'feat_sma_dist': float((df['close'].iloc[-1] - sma20.iloc[-1]) / (sma20.iloc[-1] + 1e-8)),
         'feat_atr_pct': float((atr.iloc[-1] / df['close'].iloc[-1]) * 100.0),
@@ -270,20 +280,15 @@ def train_meta_classifier(df, direction='long'):
     except Exception:
         prob = 0.5
         
-    return prob
+    return prob, val_auc
 
 
 def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
     if df_4h is None or len(df_4h) < 60 or df_1d is None or len(df_1d) < 60:
         return {
-            'pattern_score': 50.0, 
-            'pattern_signal': 'none', 
-            'recommended_leverage': 1, 
-            'recommended_trailing_mult': 2.5, 
-            'min_score_required': MIN_BOSS_SCORE,
-            'strictness_mode': 'trend_continuation_pullback',
-            'confidence': 0.0,
-            'last_candle_ts': 0
+            'pattern_score': 50.0, 'pattern_signal': 'none', 'recommended_leverage': 1, 
+            'recommended_trailing_mult': 2.5, 'min_score_required': MIN_BOSS_SCORE,
+            'strictness_mode': 'trend_pullback', 'last_candle_ts': 0
         }
 
     ind_4h = compute_smart_indicators(df_4h)
@@ -294,62 +299,69 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
     score = 50.0
 
     has_trend = ind_4h['adx'] >= MIN_ADX_TREND and ind_1d['adx'] > 14.0
-
     close_to_support = (ind_4h['close'] - sr_sd['nearest_support']) <= (2.0 * ind_4h['atr'])
     close_to_resistance = (sr_sd['nearest_resistance'] - ind_4h['close']) <= (2.0 * ind_4h['atr'])
 
+    # V20 Trend Pullback Logica
     is_long_setup = (
-        has_trend and
-        ind_4h['macd_hist'] > 0 and
-        ind_4h['close'] >= ind_4h['ema9'] * 0.992 and
-        ind_4h['close'] <= ind_4h['ema9'] * 1.015 and
+        has_trend and ind_4h['macd_hist'] > 0 and
+        ind_4h['close'] >= ind_4h['ema9'] * 0.992 and ind_4h['close'] <= ind_4h['ema9'] * 1.015 and
         (close_to_support or sr_sd['in_demand_zone'])
     )
-
     is_short_setup = (
-        has_trend and
-        ind_4h['macd_hist'] < 0 and
-        ind_4h['close'] <= ind_4h['ema9'] * 1.008 and
-        ind_4h['close'] >= ind_4h['ema9'] * 0.985 and
+        has_trend and ind_4h['macd_hist'] < 0 and
+        ind_4h['close'] <= ind_4h['ema9'] * 1.008 and ind_4h['close'] >= ind_4h['ema9'] * 0.985 and
         (close_to_resistance or sr_sd['in_supply_zone'])
     )
 
     if is_long_setup and not is_short_setup:
         signal = 'long'
-        score = 85.0
     elif is_short_setup and not is_long_setup:
         signal = 'short'
-        score = 85.0
+
+    # TWM Reversal Logica (Orthogonaal: koers breekt uit Bollinger bands met RSI overbought/oversold)
+    twm_signal = 'none'
+    twm_score = 50.0
+    if ind_4h['pct_b'] > 1.02 and ind_4h['rsi'] > 75.0 and ind_4h['volume_expansion_ratio'] > 1.4:
+        twm_signal = 'short' # Uitputting van stijging -> Reversal short
+        twm_score = 80.0
+    elif ind_4h['pct_b'] < -0.02 and ind_4h['rsi'] < 25.0 and ind_4h['volume_expansion_ratio'] > 1.4:
+        twm_signal = 'long'  # Uitputting van daling -> Reversal long
+        twm_score = 80.0
 
     if signal != 'none':
-        meta_prob = train_meta_classifier(df_4h, direction=signal)
-        score += (meta_prob * 15.0)
+        meta_prob, val_auc = train_meta_classifier(df_4h, direction=signal)
         
-        threshold_map = {'BTC': 0.46, 'ETH': 0.46, 'LINK': 0.40, 'SOL': 0.40, 'AVAX': 0.40}
-        min_prob = threshold_map.get(asset.upper(), 0.40)
-
-        if meta_prob < min_prob:
+        # STATISTISCHE VALIDATIE GATE: model moet echte edge tonen (AUC > 0.55)
+        if val_auc < 0.55:
             signal = 'none'
             score = 50.0
+        else:
+            tech_score = 60.0
+            prob_score = meta_prob * 40.0
+            score = round(tech_score + prob_score, 2)
+            
+            threshold_map = {'BTC': 0.52, 'ETH': 0.52, 'LINK': 0.48, 'SOL': 0.48, 'AVAX': 0.48}
+            if meta_prob < threshold_map.get(asset.upper(), 0.50):
+                signal = 'none'
+                score = 50.0
 
-    leverage = 3 if score >= 90.0 else 2
+    leverage = 3 if score >= 88.0 else (2 if score >= 78.0 else 1)
     trailing_mult = 2.5
-    
-    # Haal de exacte timestamp van de laatst afgesloten 4h candle op voor de re-entry lock
     last_candle_timestamp = int(df_4h['timestamp'].iloc[-1]) if not df_4h.empty else 0
 
     return {
         'pattern_score': float(score),
         'pattern_signal': signal,
+        'twm_signal': twm_signal,
+        'twm_score': float(twm_score),
         'recommended_leverage': int(leverage),
         'recommended_trailing_mult': float(trailing_mult),
         'min_score_required': MIN_BOSS_SCORE,
-        'strictness_mode': 'trend_continuation_pullback',
+        'strictness_mode': 'trend_pullback_with_auc_gate',
         'atr_pct': round(ind_4h['atr_pct'], 2),
         'adx_4h': round(ind_4h['adx'], 2),
         'volume_expansion_ratio': ind_4h['volume_expansion_ratio'],
-        'is_volume_expansion': ind_4h['is_volume_expansion'],
-        'is_bollinger_squeeze': ind_4h['is_bollinger_squeeze'],
         'last_candle_ts': last_candle_timestamp,
         'updated_at': time.time()
     }
@@ -405,6 +417,7 @@ def push_state_to_github(filename, data):
     except Exception:
         pass
 
+
 def run_final_boss_scan():
     print("--- [Trend-Pullback Agent] Start marktscan ---")
     pull_ranking_from_github()
@@ -425,7 +438,7 @@ def run_final_boss_scan():
             analysis = analyze_advanced_patterns(df_4h, df_1d, asset=asset)
             pattern_filename = f'pattern_state_{asset.lower()}_4h.json'
             push_state_to_github(pattern_filename, analysis)
-            print(f"👑 {asset} Agent: Signaal={analysis['pattern_signal'].upper()} | VolRatio={analysis['volume_expansion_ratio']} | Squeeze={analysis['is_bollinger_squeeze']}")
+            print(f"👑 {asset} Agent: V20={analysis['pattern_signal'].upper()} | TWM={analysis['twm_signal'].upper()} | Score={analysis['pattern_score']}")
         time.sleep(5.0)
 
 
