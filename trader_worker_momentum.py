@@ -20,7 +20,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
             
             html = "<html><head><title>TWM - Live Mean Reversion Sniper</title></head><body style='font-family: Arial; padding: 20px; background-color: #0f172a; color: #f8fafc;'>"
-            html += "<h2 style='color: #38bdf8;'>🚀 TWM - Exhaustion Reversal Sniper</h2>"
+            html += "<h2 style='color: #38bdf8;'>🚀 TWM - Exhaustion Reversal Sniper (Geharde Versie)</h2>"
             
             ranking_file = 'kucoin_best_coins_ranking.csv'
             if os.path.exists(ranking_file):
@@ -121,10 +121,30 @@ MAX_CONCURRENT_POSITIONS = int(os.environ.get('MAX_CONCURRENT_POSITIONS', 5))
 TP_ATR_mult_BASE = 5.0  
 TRAILING_SL_MULT = 2.0  
 MAX_STATE_AGE_SECONDS = 8 * 3600
+MAX_CANDLE_AGE_SECONDS = 4.5 * 3600  # Stricte candle-leeftijd check (~4.5 uur)
 
 active_trades = {}
 symbol_cooldowns = {}
 symbol_last_traded_candles = {}
+
+# --- STATUS LADEN VANUIT GITHUB BIJ OPSTART (Voorkomt geheugenverlies bij restart) ---
+def pull_status_from_github():
+    global active_trades, symbol_cooldowns, symbol_last_traded_candles
+    token = os.environ.get('GITHUB_TOKEN', '')
+    url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/trader_status_momentum.json?ref={GITHUB_BRANCH}'
+    headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'twm-sniper-worker'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            active_trades = data.get('active_trades', {})
+            symbol_cooldowns = data.get('cooldowns', {})
+            symbol_last_traded_candles = data.get('last_traded_candles', {})
+            print(f"📥 TWM Status hersteld van GitHub: {len(active_trades)} actieve trades.")
+    except Exception:
+        print("ℹ️ Geen eerdere TWM status gevonden op GitHub, starten met schone lei.")
 
 exchange = ccxt.kucoinfutures({
     'apiKey': os.getenv('KUCOIN_API_KEY', ''),
@@ -149,7 +169,8 @@ def push_trader_status_to_github():
     data = {
         'updated_at': time.time(),
         'active_trades': active_trades,
-        'cooldowns': symbol_cooldowns
+        'cooldowns': symbol_cooldowns,
+        'last_traded_candles': symbol_last_traded_candles
     }
     filename = 'trader_status_momentum.json'
     content_bytes = json.dumps(data, indent=2).encode('utf-8')
@@ -203,8 +224,18 @@ def load_pattern_state(asset):
             pst = json.load(f)
     except Exception:
         return None
-    if time.time() - float(pst.get('updated_at', 0) or 0) > MAX_STATE_AGE_SECONDS:
+        
+    updated_at = float(pst.get('updated_at', 0) or 0)
+    last_candle_ts = float(pst.get('last_candle_ts', 0) or 0)
+    current_time = time.time()
+
+    # Stricte leeftijdchecks
+    if current_time - updated_at > MAX_STATE_AGE_SECONDS:
         return None
+    if last_candle_ts > 0 and current_time - last_candle_ts > MAX_CANDLE_AGE_SECONDS:
+        print(f"⚠️ TWM Waarschuwing: Pattern state voor {asset} heeft te oude candle ({int((current_time - last_candle_ts)/3600)} uur oud).")
+        return None
+        
     return pst
 
 
@@ -215,14 +246,20 @@ def close_position(symbol, side, contracts):
     try:
         open_orders = exchange.fetch_open_orders(symbol)
         for o in open_orders:
-            if 'twm_' in str(o.get('clientOrderId', '')):
-                exchange.cancel_order(o['id'], symbol)
+            c_id = str(o.get('clientOrderId', ''))
+            if 'twm_' in c_id:
+                try:
+                    exchange.cancel_order(o['id'], symbol)
+                except Exception:
+                    pass
+                    
         execute_with_retry(lambda: exchange.create_order(
             symbol, 'market', close_side, contracts, None,
             {'reduceOnly': True, 'marginMode': DESIRED_MARGIN_MODE}
         ))
         return True
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ TWM sluitfout voor {symbol}: {e}")
         return False
 
 
@@ -240,22 +277,19 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
         })
         new_order_id = new_order.get('id') if new_order else None
 
+        # Ruim oude twm stops op basis van prefix op i.p.v. type != 'limit'
         open_orders = exchange.fetch_open_orders(symbol)
         for o in open_orders:
             order_id = o.get('id')
             c_id = str(o.get('clientOrderId', ''))
-            o_type = str(o.get('type', '')).lower()
-            
-            if 'take' in o_type or 'tp' in c_id or o_type == 'limit':
-                continue
-            if order_id != new_order_id and ('twm_sl_' in c_id or o_type == 'stop'):
+            if order_id != new_order_id and 'twm_sl_' in c_id:
                 try:
                     exchange.cancel_order(order_id, symbol)
                 except Exception:
                     pass
         return new_order_id
     except Exception as e:
-        print(f"⚠️ TWM SL update fout voor {symbol}: {e}")
+        print(f"⚠️ TWM Kon exchange stop-loss niet bijwerken voor {symbol}: {e}")
         return old_sl_order_id
 
 
@@ -276,6 +310,12 @@ def manage_open_positions_and_trailing_stops(symbols):
         side = pos.get('side')
         if side not in ('long', 'short'):
             continue
+            
+        # KRITISCHE FIX: Negeer posities die niet in onze eigen active_trades staan (voorkomt bot-gevechten!)
+        trade = active_trades.get(symbol)
+        if trade is None:
+            continue
+            
         open_symbols.add(symbol)
         entry = float(pos.get('entryPrice') or 0)
 
@@ -283,22 +323,6 @@ def manage_open_positions_and_trailing_stops(symbols):
             price = float(exchange.fetch_ticker(symbol)['last'])
         except Exception:
             continue
-
-        trade = active_trades.get(symbol)
-        if trade is None:
-            asset = symbol.split('/')[0].split(':')[0]
-            pst = load_pattern_state(asset)
-            atr_pct = float(pst.get('atr_pct', 2.0)) if pst else 2.0
-            atr = entry * (atr_pct / 100.0)
-            sgn = 1 if side == 'long' else -1
-            trade = active_trades[symbol] = {
-                'side': side, 'entry': entry, 'peak': price, 'atr': atr,
-                'sl': entry - sgn * TRAILING_SL_MULT * atr,
-                'tp': entry + sgn * TP_ATR_mult_BASE * atr,
-                'trailing_mult': TRAILING_SL_MULT,
-                'breakeven_secured': False,
-            }
-            state_changed = True
 
         atr = trade['atr']
         sgn = 1 if side == 'long' else -1
@@ -335,7 +359,7 @@ def manage_open_positions_and_trailing_stops(symbols):
                 active_trades.pop(symbol, None)
                 state_changed = True
 
-    # KRITISCHE FIX: Prune actieve trades die niet meer op de exchange bestaan
+    # Prune actieve trades die niet meer op de exchange bestaan
     to_remove = [sym for sym in active_trades if sym not in open_symbols]
     if to_remove:
         for sym in to_remove:
@@ -374,14 +398,12 @@ def compute_contract_amount(symbol, price, leverage):
 def execute_live_trades_scan(symbols):
     current_time = time.time()
     
-    # KRITISCHE FIX: Opschonen van verlopen cooldowns
     expired_cooldowns = [sym for sym, ts in symbol_cooldowns.items() if current_time - ts > COOLDOWN_SECONDS]
     for sym in expired_cooldowns:
         symbol_cooldowns.pop(sym, None)
     if expired_cooldowns:
         push_trader_status_to_github()
 
-    # KRITISCHE FIX: Ophalen van verse states via GitHub
     pull_latest_states_from_github(symbols)
 
     try:
@@ -394,11 +416,16 @@ def execute_live_trades_scan(symbols):
         if abs(float(p.get('contracts') or 0)) > 0:
             active_symbols.add(p.get('symbol'))
 
-    if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
+    # Tel alleen eigen actieve posities mee voor het concurrency limiet
+    my_active_count = len([s for s in active_symbols if s in active_trades])
+    if my_active_count >= MAX_CONCURRENT_POSITIONS:
         return
 
     for symbol in symbols:
-        if symbol not in exchange.markets or symbol in symbol_cooldowns or symbol in active_symbols:
+        if symbol not in exchange.markets or symbol in symbol_cooldowns:
+            continue
+        # Als er al een positie op dit symbool loopt (van welke bot dan ook), skip
+        if symbol in active_symbols:
             continue
         try:
             pending = exchange.fetch_open_orders(symbol)
@@ -447,28 +474,43 @@ def evaluate_and_trade_reversal(asset, symbol):
 
     side = 'buy' if is_long else 'sell'
     if DRY_RUN:
+        print(f"🧪 [DRY RUN TWM] Zou order plaatsen: {side} {amount}x {symbol}")
         return
 
-    params = {
-        'stopLoss': {'triggerPrice': stop_loss_val},
-        'takeProfit': {'triggerPrice': take_profit_val},
-        'marginMode': DESIRED_MARGIN_MODE,
-        'clientOrderId': f"twm_entry_{int(time.time() * 1000)}"
-    }
+    # Plaats marktorder zonder ingebedde sl/tp om weesorders te voorkomen, zet ze direct expliciet na entry
     try:
-        exchange.create_order(symbol, 'market', side, amount, None, params)
+        entry_order = exchange.create_order(symbol, 'market', side, amount, None, {
+            'marginMode': DESIRED_MARGIN_MODE,
+            'clientOrderId': f"twm_entry_{int(time.time() * 1000)}"
+        })
+        
+        # Plaats expliciete SL en TP met unieke twm_ prefix
+        close_side = 'sell' if is_long else 'buy'
+        exchange.create_order(symbol, 'stop', close_side, amount, None, {
+            'stopPrice': stop_loss_val,
+            'reduceOnly': True,
+            'clientOrderId': f"twm_sl_{int(time.time() * 1000)}"
+        })
+        exchange.create_order(symbol, 'limit', close_side, amount, take_profit_val, {
+            'reduceOnly': True,
+            'clientOrderId': f"twm_tp_{int(time.time() * 1000)}"
+        })
+
         if candle_ts > 0:
             symbol_last_traded_candles[symbol] = candle_ts
+
         active_trades[symbol] = {
             'side': 'long' if is_long else 'short', 'entry': price, 'peak': price, 'atr': atr,
             'sl': stop_loss_val, 'tp': take_profit_val, 'trailing_mult': TRAILING_SL_MULT, 'breakeven_secured': False,
         }
         push_trader_status_to_github()
+        print(f"🚀 TWM SUCCES: Positie geopend voor {symbol} ({side} {amount})")
     except Exception as e:
         print(f"⚠️ TWM orderfout {symbol}: {e}")
 
 
 if __name__ == '__main__':
+    pull_status_from_github() # Status inladen bij opstart!
     threading.Thread(target=run_server, daemon=True).start()
     print("🚀 TWM Mean-Reversion Sniper gestart.")
     while True:
