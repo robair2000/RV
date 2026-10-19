@@ -273,8 +273,9 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
         return None
     try:
         close_side = 'sell' if side == 'long' else 'buy'
+        client_order_id = f"v20_sl_{int(time.time() * 1000)}" # (of twm_sl_ voor de momentum sniper)
         
-        client_order_id = f"v20_sl_{int(time.time() * 1000)}"
+        # 1. Plaats direct de nieuwe Stop Loss order op de exchange
         new_order = exchange.create_order(symbol, 'stop', close_side, contracts, None, {
             'stopPrice': new_sl,
             'reduceOnly': True,
@@ -282,23 +283,27 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
         })
         new_order_id = new_order.get('id') if new_order else None
 
-        if old_sl_order_id:
-            try:
-                exchange.cancel_order(old_sl_order_id, symbol)
-            except Exception:
-                pass
-
-        # Veiligheidsfilter: annuleer uitsluitend eigen V20 stop-loss orders
+        # 2. Haal actieve open orders op om oude eigen SL orders netjes op te ruimen
         open_orders = exchange.fetch_open_orders(symbol)
         for o in open_orders:
             order_id = o.get('id')
             c_id = str(o.get('clientOrderId', ''))
-            info_str = str(o.get('info', {})).lower()
+            o_type = str(o.get('type', '')).lower()
             
-            if 'take profit' in info_str or 'tp' in info_str:
+            # Als we een specifiek oud ID hebben, annuleer die direct
+            if old_sl_order_id and order_id == old_sl_order_id:
+                try:
+                    exchange.cancel_order(order_id, symbol)
+                except Exception:
+                    pass
                 continue
             
-            if order_id != new_order_id and 'v20_' in c_id:
+            # Anders: ruim alleen onze eigen oude stop orders op (herkenbaar aan clientOrderId prefix of type 'stop')
+            # BLIJF ALTIJD AF van take profit orders ('limit' of 'take profit')
+            if order_id != new_order_id and ('v20_sl_' in c_id or 'twm_sl_' in c_id or o_type == 'stop'):
+                # Extra check: als het expliciet een take-profit of limit order is, sla hem over
+                if 'take' in o_type or 'tp' in c_id or o_type == 'limit':
+                    continue
                 try:
                     exchange.cancel_order(order_id, symbol)
                 except Exception:
@@ -306,8 +311,8 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
                     
         return new_order_id
     except Exception as e:
-        print(f"⚠️ Kon V20 exchange stop-loss niet bijwerken voor {symbol}: {e}")
-        return None
+        print(f"⚠️ Kon exchange stop-loss niet bijwerken voor {symbol}: {e}")
+        return old_sl_order_id
 
 
 def manage_open_positions_and_trailing_stops(symbols):
