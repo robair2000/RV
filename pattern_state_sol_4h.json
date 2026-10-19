@@ -7,9 +7,9 @@
   "recommended_trailing_mult": 2.5,
   "min_score_required": 75.0,
   "strictness_mode": "trend_pullback_with_auc_gate",
-  "atr_pct": 1.23,
-  "adx_4h": 53.3,
-  "volume_expansion_ratio": 0.27,
-  "last_candle_ts": 1791676800000,
-  "updated_at": 1792423874.4363832
+  "atr_pct": 1.18,
+  "adx_4h": 47.99,
+  "volume_expansion_ratio": 0.4,
+  "last_candle_ts": 1791691200000,
+  "updated_at": 1792427613.2282915
 }
