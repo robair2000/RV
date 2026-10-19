@@ -225,14 +225,22 @@ def load_pattern_state(asset):
         return None
         
     updated_at = float(pst.get('updated_at', 0) or 0)
-    last_candle_ts_ms = float(pst.get('last_candle_ts', 0) or 0)
+    raw_candle_ts = float(pst.get('last_candle_ts', 0) or 0)
     current_time = time.time()
 
+    # Check of state bestand zelf te oud is (> 8 uur)
     if current_time - updated_at > MAX_STATE_AGE_SECONDS:
+        print(f"⚠️ TWM: Pattern state file voor {asset} is te oud (updated_at).")
         return None
     
-    if last_candle_ts_ms > 0:
-        candle_age_seconds = current_time - (last_candle_ts_ms / 1000.0)
+    if raw_candle_ts > 0:
+        # Als de timestamp in milliseconden is (groter dan 10 miljard), omrekenen naar seconden
+        candle_ts_sec = raw_candle_ts / 1000.0 if raw_candle_ts > 1e10 else raw_candle_ts
+        candle_age_seconds = current_time - candle_ts_sec
+        
+        # Debug print om te controleren wat TWM nu berekent
+        print(f"🔍 TWM Check {asset}: Candle leeftijd is {candle_age_seconds / 3600:.1f} uur.")
+
         if candle_age_seconds > MAX_CANDLE_AGE_SECONDS:
             print(f"⚠️ TWM Waarschuwing: Pattern state voor {asset} heeft te oude candle ({int(candle_age_seconds/3600)} uur oud).")
             return None
