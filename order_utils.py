@@ -59,6 +59,7 @@ def create_stop_loss(exchange, symbol, close_side, contracts, stop_price, prefix
         'stopLossPrice': stop_price,
         'reduceOnly': True,
         'clientOrderId': cid,
+        'marginMode': 'cross',  # Dwingt cross af voor de stop-order
     })
     return order.get('id') if order else None
 
@@ -68,6 +69,7 @@ def create_take_profit(exchange, symbol, close_side, contracts, tp_price, prefix
     order = exchange.create_order(symbol, 'limit', close_side, contracts, tp_price, {
         'reduceOnly': True,
         'clientOrderId': cid,
+        'marginMode': 'cross',  # Dwingt cross af voor de take-profit
     })
     return order.get('id') if order else None
 
