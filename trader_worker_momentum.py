@@ -20,8 +20,8 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.send_header("Content-type", "text/html; charset=utf-8")
             self.end_headers()
             
-            html = "<html><head><title>TWM - Live Momentum Dashboard</title></head><body style='font-family: Arial; padding: 20px; background-color: #0f172a; color: #f8fafc;'>"
-            html += "<h2 style='color: #38bdf8;'>🚀 TWM - Trader Worker Momentum (Live Scanner)</h2>"
+            html = "<html><head><title>TWM - Live Explosive Reversal Dashboard</title></head><body style='font-family: Arial; padding: 20px; background-color: #0f172a; color: #f8fafc;'>"
+            html += "<h2 style='color: #38bdf8;'>🚀 TWM - Explosive Reversal Hunter (Live Scanner)</h2>"
             
             ranking_file = 'kucoin_best_coins_ranking.csv'
             if os.path.exists(ranking_file):
@@ -71,7 +71,7 @@ def pull_ranking_from_github():
     filename = 'kucoin_best_coins_ranking.csv'
     token = os.environ.get('GITHUB_TOKEN', '')
     url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
-    headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'twm-momentum-worker'}
+    headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'twm-reversal-worker'}
     if token:
         headers['Authorization'] = f'Bearer {token}'
     try:
@@ -105,11 +105,10 @@ def get_combined_trading_assets(top_n=5):
 
 TIMEFRAMES = ['4h', '1d']
 
-# --- CONFIGURATIE TWM (MOMENTUM / BREAKOUT SPECIFIEK) ---
+# --- CONFIGURATIE TWM (EXPLOSIVE REVERSAL & S&R BOUNCE SPECIFIEK) ---
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
-MIN_ADX_MOMENTUM = float(os.environ.get('MIN_ADX_MOMENTUM', 28.0))  # Extra streng voor breakouts
 MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 80.0))
-COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 3600))  # Kortere cooldown bij breakouts (1 uur)
+COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 3600))  # 1 uur cooldown na trade
 
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
@@ -117,8 +116,8 @@ EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
 MAX_CONCURRENT_POSITIONS = 2
 MIN_RRR = 3.5
-TP_ATR_MULT_BASE = 8.0  # Ruime Take Profit voor Big Moves
-TRAILING_SL_MULT = 3.0  # Iets ruimere Trailing Stop
+TP_ATR_MULT_BASE = 8.0  # Ruime Take Profit voor Explosive Big Moves
+TRAILING_SL_MULT = 3.0  # Robuuste Trailing Stop
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 
 active_trades = {}
@@ -165,7 +164,7 @@ def push_trader_status_to_github():
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "twm-momentum-worker"
+        "User-Agent": "twm-reversal-worker"
     }
 
     sha = None
@@ -204,7 +203,7 @@ def pull_latest_states_from_github(symbols):
 
     for filename in set(files_to_pull):
         url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
-        headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'twm-momentum-worker'}
+        headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'twm-reversal-worker'}
         if token:
             headers['Authorization'] = f'Bearer {token}'
         try:
@@ -284,7 +283,7 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl):
                 except Exception:
                     pass
     except Exception as e:
-        print(f"⚠️ TWM: Kon stop-loss niet bijwerken voor {symbol}: {e}")
+        print(f"⚠️ TWM Reversal: Kon stop-loss niet bijwerken voor {symbol}: {e}")
 
 
 def manage_open_positions_and_trailing_stops(symbols):
@@ -348,7 +347,7 @@ def manage_open_positions_and_trailing_stops(symbols):
                 trade['breakeven_secured'] = True
                 state_changed = True
 
-        # Dynamische Trailing Stop op TWM tempo
+        # Dynamische Trailing Stop op Reversal tempo
         if side == 'long':
             if price > trade['peak']:
                 trade['peak'] = price
@@ -418,14 +417,14 @@ def compute_contract_amount(asset, symbol, price, leverage):
 
     lots = math.floor(target_notional / per_contract_notional)
     if lots < max(1, min_amount):
-        print(f"⚠️ TWM {symbol}: Contractgrootte te klein ({lots} contracten). Verhoog TRADE_AMOUNT_USDT.")
+        print(f"⚠️ TWM Reversal {symbol}: Contractgrootte te klein ({lots} contracten). Verhoog TRADE_AMOUNT_USDT.")
         return None
 
     return float(lots)
 
 
 def execute_live_trades_scan(symbols):
-    print(f"🚀 [TWM Momentum Worker] Start marktscan voor breakouts op: {symbols}")
+    print(f"🚀 [TWM Explosive Reversal Hunter] Start marktscan op: {symbols}")
     current_time = time.time()
     expired_cooldowns = [sym for sym, ts in symbol_cooldowns.items() if current_time - ts > COOLDOWN_SECONDS]
     for sym in expired_cooldowns:
@@ -437,7 +436,7 @@ def execute_live_trades_scan(symbols):
         positions = execute_with_retry(lambda: exchange.fetch_positions())
         open_orders = execute_with_retry(lambda: exchange.fetch_open_orders())
     except Exception as e:
-        print(f"⚠️ TWM: Fout bij ophalen posities/orders van KuCoin: {e}")
+        print(f"⚠️ TWM Reversal: Fout bij ophalen posities/orders van KuCoin: {e}")
         return
 
     active_symbols = set()
@@ -446,7 +445,7 @@ def execute_live_trades_scan(symbols):
             active_symbols.add(p.get('symbol'))
 
     if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
-        print(f"ℹ️ TWM: Maximaal aantal actieve posities bereikt ({len(active_symbols)}/{MAX_CONCURRENT_POSITIONS}).")
+        print(f"ℹ️ TWM Reversal: Maximaal aantal actieve posities bereikt ({len(active_symbols)}/{MAX_CONCURRENT_POSITIONS}).")
         return
 
     for symbol in symbols:
@@ -456,21 +455,21 @@ def execute_live_trades_scan(symbols):
             continue
         try:
             asset = symbol.split('/')[0].split(':')[0]
-            print(f"🔎 TWM Evalueren van {symbol} (Asset: {asset})...")
-            evaluate_and_trade_momentum(asset, symbol)
+            print(f"🔎 TWM Reversal Evalueren van {symbol} (Asset: {asset})...")
+            evaluate_and_trade_reversal(asset, symbol)
         except Exception as e:
-            print(f"⚠️ TWM: Fout bij evalueren van {symbol}: {e}")
+            print(f"⚠️ TWM Reversal: Fout bij evalueren van {symbol}: {e}")
 
 
-def evaluate_and_trade_momentum(asset, symbol):
+def evaluate_and_trade_reversal(asset, symbol):
     state_4h = load_state(asset, '4h')
     if state_4h is None:
-        print(f"   ⏳ TWM {symbol}: Geen geldige 4h state gevonden.")
+        print(f"   ⏳ TWM Reversal {symbol}: Geen geldige 4h state gevonden.")
         return
 
     quant_signal = state_4h['signal']
     if quant_signal not in ('long', 'short'):
-        print(f"   ℹ️ TWM {symbol}: Quant signaal is neutraal ('{quant_signal}').")
+        print(f"   ℹ️ TWM Reversal {symbol}: Quant signaal is neutraal ('{quant_signal}').")
         return
 
     price = float(exchange.fetch_ticker(symbol)['last'])
@@ -481,36 +480,30 @@ def evaluate_and_trade_momentum(asset, symbol):
 
     pattern_st = load_pattern_state(asset)
     if pattern_st is None:
-        print(f"   ⏳ TWM {symbol}: Geen S&R pattern state gevonden voor 4h.")
+        print(f"   ⏳ TWM Reversal {symbol}: Geen S&R pattern state gevonden voor 4h.")
         return
 
-    adx_4h = float(pattern_st.get('adx_4h', 0.0))
     boss_signal = pattern_st.get('pattern_signal', 'none')
     boss_score = pattern_st.get('pattern_score', 50.0)
     boss_leverage = int(pattern_st.get('recommended_leverage', 2))
 
-    print(f"   🔥 TWM {symbol}: Quant={quant_signal.upper()} | Boss={boss_signal.upper()} | Score={boss_score} | ADX_4h={adx_4h} (Vereist: >={MIN_ADX_MOMENTUM})")
+    print(f"   🎯 TWM Reversal {symbol}: Quant={quant_signal.upper()} | Boss={boss_signal.upper()} | Score={boss_score} (Vereist: >={MIN_BOSS_SCORE})")
 
-    # TWM EIS 1: Hoge ADX voor echte trendkracht
-    if adx_4h < MIN_ADX_MOMENTUM:
-        print(f"   🚫 TWM {symbol}: VETO - Trendkracht te zwak (ADX {adx_4h} < {MIN_ADX_MOMENTUM}). Geen breakout.")
-        return
-
-    # TWM EIS 2: Confluence met de Boss Score
+    # TWM REVERSAL EIS: Confluence tussen de S&R Agent en Quant Model (zonder strenge ADX trend filter)
     if boss_signal != quant_signal or boss_score < MIN_BOSS_SCORE:
-        print(f"   🚫 TWM {symbol}: VETO - Signalen komen niet overeen of score is te laag.")
+        print(f"   🚫 TWM Reversal {symbol}: VETO - Signalen komen niet overeen of score is te laag.")
         return
 
     is_long = (quant_signal == 'long')
 
-    # TWM VOORKEUR: Directe Market Order Instap bij Breakout (Geen wachten op dip)
+    # Agressieve Market Order Instap om de Explosive Reversal direct te vangen
     market_entry_price = price
     sgn = 1 if is_long else -1
     stop_loss_val = market_entry_price - sgn * TRAILING_SL_MULT * atr
     take_profit_val = market_entry_price + sgn * TP_ATR_MULT_BASE * atr
 
     if not ensure_margin_and_leverage(symbol, boss_leverage):
-        print(f"   ⚠️ TWM {symbol}: Kon hefboom/margin mode niet instellen.")
+        print(f"   ⚠️ TWM Reversal {symbol}: Kon hefboom/margin mode niet instellen.")
         return
         
     amount = compute_contract_amount(asset, symbol, market_entry_price, boss_leverage)
@@ -519,7 +512,7 @@ def evaluate_and_trade_momentum(asset, symbol):
 
     side = 'buy' if is_long else 'sell'
     if DRY_RUN:
-        print(f"   🧪 [DRY RUN TWM] Zou MARKET order plaatsen: {side} {amount}x {symbol} op marktprijs {market_entry_price}")
+        print(f"   🧪 [DRY RUN TWM REVERSAL] Zou MARKET order plaatsen: {side} {amount}x {symbol} op marktprijs {market_entry_price}")
         return
 
     params = {
@@ -528,9 +521,8 @@ def evaluate_and_trade_momentum(asset, symbol):
         'marginMode': DESIRED_MARGIN_MODE,
     }
     try:
-        # TWM gebruikt een MARKET order om de uitbraak direct mee te pakken!
         order = execute_with_retry(lambda: exchange.create_order(symbol, 'market', side, amount, None, params))
-        print(f"   🚀 TWM SUCCES: Breakout Market Order uitgevoerd voor {symbol} ({side} {amount} contracten @ {market_entry_price})!")
+        print(f"   🚀 TWM REVERSAL SUCCES: Market Order uitgevoerd voor {symbol} ({side} {amount} contracten @ {market_entry_price})!")
         active_trades[symbol] = {
             'side': 'long' if is_long else 'short', 
             'entry': market_entry_price, 'peak': market_entry_price, 'atr': atr,
@@ -540,12 +532,12 @@ def evaluate_and_trade_momentum(asset, symbol):
         }
         push_trader_status_to_github()
     except Exception as e:
-        print(f"   ❌ TWM Fout bij plaatsen breakout market order voor {symbol}: {e}")
+        print(f"   ❌ TWM Reversal Fout bij plaatsen market order voor {symbol}: {e}")
 
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print("🚀 TWM (Trader Worker Momentum) gestart op Render (scan interval: 60 seconden).")
+    print("🚀 TWM (Explosive Reversal Hunter) gestart op Render (scan interval: 60 seconden).")
     while True:
         try:
             pull_ranking_from_github()
@@ -554,5 +546,5 @@ if __name__ == '__main__':
             manage_open_positions_and_trailing_stops(current_symbols)
             execute_live_trades_scan(current_symbols)
         except Exception as e:
-            print(f"⚠️ TWM: Fout in momentum trader lus: {e}")
+            print(f"⚠️ TWM Reversal: Fout in reversal trader lus: {e}")
         time.sleep(60)
