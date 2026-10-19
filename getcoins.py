@@ -6,48 +6,58 @@ import time
 import math
 
 # --- CONFIGURATIE ---
-# GEBRUIK NU STRICT KUCOIN FUTURES VOOR SWAP MARKTEN EN CORRECTE ENDPOINTS
 EXCHANGE = ccxt.kucoinfutures({
     'enableRateLimit': True
 })
 TIMEFRAME = '4h'
-MIN_DAILY_VOLUME_USDT = 20_000_000  # Minimum 20 miljoen USDT 24h volume voor liquiditeitsbescherming
+MIN_DAILY_VOLUME_USDT = 25_000_000  # Minimum 25 miljoen USDT 24h volume voor echte institutionele liquiditeit
+CORE_SYMBOLS = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
 
 def fetch_top_performing_coins():
-    print("🔄 Laden van KuCoin Futures markten...")
+    print("🔄 Laden van KuCoin Futures markten en tickers...")
     try:
         EXCHANGE.load_markets()
     except Exception as e:
         print(f"❌ Fout bij laden markten: {e}")
         return
 
-    # Haal ook tickers op om direct 24h volumes te controleren
     try:
         tickers = EXCHANGE.fetch_tickers()
     except Exception:
         tickers = {}
 
-    # Filter ABSOLUUT uitsluitend op actieve lineaire USDT perpetual swaps (eindigend op :USDT)
-    symbols = []
+    # Filter uitsluitend op actieve lineaire USDT perpetual swaps
+    valid_symbols = []
     for symbol, market in EXCHANGE.markets.items():
         if market.get('linear', False) and market.get('active', True) and symbol.endswith(':USDT'):
-            if '/' in symbol and not 'DOWN' in symbol and not 'UP' in symbol:
-                symbols.append(symbol)
+            if '/' in symbol and 'DOWN' not in symbol and 'UP' not in symbol:
+                valid_symbols.append(symbol)
 
-    symbols = list(set(symbols))
-    print(f"📊 Gevonden geldige USDT Futures: {len(symbols)}. Start liquiditeits- en trendanalyse...")
+    valid_symbols = list(set(valid_symbols))
+    print(f"📊 Gevonden geldige USDT Futures: {len(valid_symbols)}. Sorteren op werkelijke 24u liquiditeit...")
+
+    # STAP 1: Sorteer ALLE symbolen direct op 24u volume (Liquiditeit Eerst!)
+    symbol_volumes = []
+    for symbol in valid_symbols:
+        ticker = tickers.get(symbol, {})
+        vol = float(ticker.get('quoteVolume') or 0.0)
+        symbol_volumes.append((symbol, vol))
+
+    # Sorteer aflopend op volume
+    symbol_volumes.sort(key=lambda x: x[1], reverse=True)
+
+    # Neem de top 60 meest liquide munten, maar zorg dat CORE_SYMBOLS er ALTIJD in zitten
+    top_liquid_symbols = [s for s, v in symbol_volumes[:60]]
+    for core in CORE_SYMBOLS:
+        if core in valid_symbols and core not in top_liquid_symbols:
+            top_liquid_symbols.append(core)
+
+    print(f"🎯 Geselecteerd voor diepgaande analyse (Top liquiditeit + Core): {len(top_liquid_symbols)} symbolen.")
     
     results = []
 
-    # Prioriteer de belangrijkste kernmunten
-    priority_assets = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'LINK/USDT:USDT', 'AVAX/USDT:USDT', 'XRP/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT']
-    test_symbols = [s for s in priority_assets if s in symbols] + [s for s in symbols if s not in priority_assets]
-
-    # Beperk tot de top 50 om performance te waarborgen en vertraging te voorkomen
-    for symbol in test_symbols[:50]:
+    for symbol in top_liquid_symbols:
         asset = symbol.split('/')[0]
-        
-        # 1. LIQUIDITEITSFILTER VIA TICKER (24u Volume in USDT)
         ticker = tickers.get(symbol, {})
         quote_volume_24h = float(ticker.get('quoteVolume') or 0.0)
         
@@ -67,7 +77,7 @@ def fetch_top_performing_coins():
             if quote_volume_24h == 0:
                 quote_volume_24h = recent_quote_vol
 
-            if quote_volume_24h < MIN_DAILY_VOLUME_USDT and symbol not in priority_assets:
+            if quote_volume_24h < MIN_DAILY_VOLUME_USDT and symbol not in CORE_SYMBOLS:
                 continue
 
             pc = close.shift(1)
@@ -80,8 +90,13 @@ def fetch_top_performing_coins():
             
             bh_return = (close.iloc[-1] / close.iloc[0] - 1) * 100
 
-            liquidity_score = min(math.log10(quote_volume_24h + 1), 10.0)
-            composite_score = round((trend_strength * 1.2) + (atr_pct * 1.5) + (liquidity_score * 2.0), 2)
+            # GEZONDE SCORING: Beloon diepe liquiditeit en stabiele trend, straf extreme grillige volatiliteit af
+            liquidity_score = min(math.log10(quote_volume_24h + 1), 12.0)
+            
+            # Volatility penalty: te extreme ATR (>8%) duidt op jumpy illiquide gedrag of excessief risico
+            volatility_penalty = max(0.0, (atr_pct - 6.0) * 0.8) if atr_pct > 6.0 else 0.0
+
+            composite_score = round((trend_strength * 1.5) + (liquidity_score * 3.0) - volatility_penalty, 2)
 
             results.append({
                 'Asset': asset,
@@ -96,17 +111,17 @@ def fetch_top_performing_coins():
         except Exception:
             continue
             
-        time.sleep(0.05)
+        time.sleep(0.03)
 
     if not results:
-        print("\n⚠️ Geen resultaten voldeden aan het liquiditeitsfilter.")
+        print("\n⚠️ Geen resultaten voldeden aan het strenge liquiditeitsfilter.")
         return
 
     res_df = pd.DataFrame(results)
     res_df = res_df.sort_values(by='Score', ascending=False).reset_index(drop=True)
 
     print("\n\n" + "="*65)
-    print("🏆 GEOPTIMALISEERDE V20 INSTITUTIONELE FUTURES RANKING")
+    print("🏆 GEOPTIMALISEERDE INSTITUTIONELE LIQUIDITEITS-RANKING")
     print("="*65)
     print(res_df.head(15).to_string(index=False))
     print("="*65)
