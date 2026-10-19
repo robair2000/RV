@@ -145,7 +145,9 @@ def compute_smart_indicators(df):
     upper_bb = sma20 + (std20 * 2.0)
     lower_bb = sma20 - (std20 * 2.0)
     bb_width = (upper_bb - lower_bb) / (sma20 + 1e-8)
-    is_bb_squeeze = bool(bb_width.iloc[-1] <= bb_width.tail(20).min() * 1.1)
+    # Bepaal de laagste bandbreedte van de afgelopen 20 bars EXCLUSIEF de huidige bar
+    prior_min_bb_width = bb_width.iloc[-21:-1].min()
+    is_bb_squeeze = bool(bb_width.iloc[-1] <= prior_min_bb_width * 1.1)
 
     pct_b = (close - lower_bb) / ((upper_bb - lower_bb) + 1e-8)
     ema9 = close.ewm(span=9, adjust=False).mean()
