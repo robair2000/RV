@@ -116,6 +116,7 @@ MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 
 active_trades = {}
 symbol_cooldowns = {}
+symbol_last_traded_candles = {}  # Geheugen om re-entry op dezelfde 4h candle te blokkeren
 
 exchange = ccxt.kucoinfutures({
     'apiKey': os.getenv('KUCOIN_API_KEY', ''),
@@ -253,7 +254,6 @@ def close_position(symbol, side, contracts):
         try:
             open_orders = exchange.fetch_open_orders(symbol)
             for o in open_orders:
-                # Annuleer uitsluitend eigen V20 orders
                 if 'v20_' in str(o.get('clientOrderId', '')):
                     exchange.cancel_order(o['id'], symbol)
         except Exception:
@@ -273,9 +273,8 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
         return None
     try:
         close_side = 'sell' if side == 'long' else 'buy'
-        client_order_id = f"v20_sl_{int(time.time() * 1000)}" # (of twm_sl_ voor de momentum sniper)
+        client_order_id = f"v20_sl_{int(time.time() * 1000)}"
         
-        # 1. Plaats direct de nieuwe Stop Loss order op de exchange
         new_order = exchange.create_order(symbol, 'stop', close_side, contracts, None, {
             'stopPrice': new_sl,
             'reduceOnly': True,
@@ -283,27 +282,22 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
         })
         new_order_id = new_order.get('id') if new_order else None
 
-        # 2. Haal actieve open orders op om oude eigen SL orders netjes op te ruimen
+        if old_sl_order_id:
+            try:
+                exchange.cancel_order(old_sl_order_id, symbol)
+            except Exception:
+                pass
+
         open_orders = exchange.fetch_open_orders(symbol)
         for o in open_orders:
             order_id = o.get('id')
             c_id = str(o.get('clientOrderId', ''))
             o_type = str(o.get('type', '')).lower()
             
-            # Als we een specifiek oud ID hebben, annuleer die direct
-            if old_sl_order_id and order_id == old_sl_order_id:
-                try:
-                    exchange.cancel_order(order_id, symbol)
-                except Exception:
-                    pass
+            if 'take profit' in o_type or 'tp' in c_id or o_type == 'limit':
                 continue
             
-            # Anders: ruim alleen onze eigen oude stop orders op (herkenbaar aan clientOrderId prefix of type 'stop')
-            # BLIJF ALTIJD AF van take profit orders ('limit' of 'take profit')
-            if order_id != new_order_id and ('v20_sl_' in c_id or 'twm_sl_' in c_id or o_type == 'stop'):
-                # Extra check: als het expliciet een take-profit of limit order is, sla hem over
-                if 'take' in o_type or 'tp' in c_id or o_type == 'limit':
-                    continue
+            if order_id != new_order_id and ('v20_sl_' in c_id or o_type == 'stop'):
                 try:
                     exchange.cancel_order(order_id, symbol)
                 except Exception:
@@ -509,16 +503,24 @@ def evaluate_and_trade(asset, symbol):
         print(f"   ℹ️ {symbol}: Quant signaal is neutraal ('{quant_signal}').")
         return
 
+    pattern_st = load_pattern_state(asset)
+    if pattern_st is None:
+        print(f"   ⏳ {symbol}: Geen S&R pattern state gevonden voor 4h.")
+        return
+
+    # --- CANDLE TIMESTAMP LOCK CHECK (VOORKOMT STALE RE-ENTRIES) ---
+    candle_ts = int(pattern_st.get('last_candle_ts', 0))
+    last_traded_ts = symbol_last_traded_candles.get(symbol, 0)
+    if candle_ts > 0 and candle_ts <= last_traded_ts:
+        print(f"   ⏳ {symbol}: Re-entry geblokkeerd. Dezelfde 4h candle ({candle_ts}) is reeds verhandeld.")
+        return
+    # -------------------------------------------------------------
+
     price = float(exchange.fetch_ticker(symbol)['last'])
     atr_pct = float(state_4h.get('atr_pct') or 0.0)
     if atr_pct <= 0:
         return
     atr = price * atr_pct / 100.0
-
-    pattern_st = load_pattern_state(asset)
-    if pattern_st is None:
-        print(f"   ⏳ {symbol}: Geen S&R pattern state gevonden voor 4h.")
-        return
 
     boss_signal = pattern_st.get('pattern_signal', 'none')
     boss_score = pattern_st.get('pattern_score', 50.0)
@@ -574,6 +576,11 @@ def evaluate_and_trade(asset, symbol):
     try:
         order = execute_with_retry(lambda: exchange.create_order(symbol, 'limit', side, amount, limit_price, params))
         print(f"   🚀 SUCCES: Limit order geplaatst voor {symbol} ({side} {amount} contracten @ {limit_price})!")
+        
+        # Sla op dat deze 4h candle nu officieel verhandeld is
+        if candle_ts > 0:
+            symbol_last_traded_candles[symbol] = candle_ts
+
         active_trades[symbol] = {
             'side': 'long' if is_long else 'short', 
             'entry': limit_price, 'peak': limit_price, 'atr': atr,
