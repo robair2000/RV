@@ -322,8 +322,9 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
         signal = 'short'
         score = 85.0
 
-    if signal != 'none':
-        # Symmetrische onafhankelijke meta-classifier evaluatie
+   if signal != 'none':
+        # KRITISCH: Geef hier expliciet de richting mee ('long' of 'short') zodat de 
+        # meta-classifier onafhankelijk traint op de specifieke directionele target!
         meta_prob = train_meta_classifier(df_4h, direction=signal)
         score += (meta_prob * 15.0)
         
