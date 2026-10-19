@@ -95,7 +95,8 @@ COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 3600))
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 
-MAX_CONCURRENT_POSITIONS = 2
+# Dynamisch instelbaar via Render Environment Variables (standaard 5)
+MAX_CONCURRENT_POSITIONS = int(os.environ.get('MAX_CONCURRENT_POSITIONS', 5))
 TP_ATR_mult_BASE = 5.0  
 TRAILING_SL_MULT = 2.0  
 MAX_STATE_AGE_SECONDS = 8 * 3600
@@ -168,7 +169,7 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
         return None
     try:
         close_side = 'sell' if side == 'long' else 'buy'
-        client_order_id = f"twm_sl_{int(time.time() * 1000)}" # Zuivere TWM isolatie tag
+        client_order_id = f"twm_sl_{int(time.time() * 1000)}"
         
         new_order = exchange.create_order(symbol, 'stop', close_side, contracts, None, {
             'stopPrice': new_sl,
@@ -303,8 +304,22 @@ def compute_contract_amount(symbol, price, leverage):
 
 def execute_live_trades_scan(symbols):
     current_time = time.time()
+    
+    try:
+        positions = execute_with_retry(lambda: exchange.fetch_positions())
+    except Exception:
+        positions = []
+
+    active_symbols = set()
+    for p in positions:
+        if abs(float(p.get('contracts') or 0)) > 0:
+            active_symbols.add(p.get('symbol'))
+
+    if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
+        return
+
     for symbol in symbols:
-        if symbol not in exchange.markets or symbol in symbol_cooldowns:
+        if symbol not in exchange.markets or symbol in symbol_cooldowns or symbol in active_symbols:
             continue
         try:
             pending = exchange.fetch_open_orders(symbol)
