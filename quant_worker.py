@@ -4,16 +4,12 @@ import os
 os.environ["PYTHONWARNINGS"] = "ignore"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-import base64
-import copy
 import gc
 import json
 import logging
 import math
 import subprocess
 import time
-import urllib.error
-import urllib.request
 import warnings
 
 import ccxt
@@ -23,84 +19,72 @@ import xgboost as xgb
 from catboost import CatBoostRegressor
 from sklearn.ensemble import RandomForestRegressor
 
+from github_utils import github_put
+from market_utils import fetch_ohlcv_paginated
+
 warnings.filterwarnings('ignore')
 logging.getLogger('xgboost').setLevel(logging.CRITICAL)
 
-GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
-GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
 def push_file_to_github(filename):
-    token = os.environ.get('GITHUB_TOKEN')
-    if not token or not os.path.exists(filename):
+    if not os.environ.get('GITHUB_TOKEN') or not os.path.exists(filename):
         return
-    try:
-        with open(filename, 'rb') as f:
-            local = f.read()
-        sha = None
-        try:
-            remote = json.loads(urllib.request.urlopen(urllib.request.Request(
-                f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}',
-                headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'}
-            )).read().decode('utf-8'))
-            sha = remote.get('sha')
-        except Exception:
-            pass
-        payload = {
-            'message': f'Auto-update {filename} [skip ci]',
-            'content': base64.b64encode(local).decode('ascii'),
-            'branch': GITHUB_BRANCH,
-        }
-        if sha:
-            payload['sha'] = sha
-        urllib.request.urlopen(urllib.request.Request(
-            f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}',
-            data=json.dumps(payload).encode('utf-8'),
-            headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'},
-            method='PUT'
-        ))
+    with open(filename, 'rb') as f:
+        content = f.read()
+    if github_put(filename, content, agent='v20-quant-worker'):
         print(f"☁️ Bestand {filename} succesvol gepusht naar GitHub.")
-    except Exception as e:
-        print(f"❌ Push van {filename} mislukt: {e}")
+
 
 # --- STAP 1: DYNAMISCHE ASSET SELECTIE ---
 def get_combined_trading_symbols(top_n=5):
     core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_symbols = []
-    
+
     if os.path.exists(ranking_file):
         try:
             df = pd.read_csv(ranking_file)
             if 'Symbol' in df.columns:
-                symbols = df['Symbol'].head(top_n).tolist()
-                for s in symbols:
+                for s in df['Symbol'].head(top_n).tolist():
                     if s not in dynamic_symbols and ':USDT' in s:
                         dynamic_symbols.append(s)
             print(f"📈 Dynamische top {top_n} geladen uit scanner: {dynamic_symbols}")
         except Exception as e:
             print(f"⚠️ Fout bij lezen van ranking CSV: {e}")
-            
+
     combined = list(dict.fromkeys(core_symbols + dynamic_symbols))
     print(f"🎯 Definitieve actieve trading scope ({len(combined)} symbols): {combined}")
     return combined
 
+
+# limit = hoeveel candles opgehaald worden (gepagineerd); lookback = max. trainingsvenster
 timeframes = {
-    '4h': {'interval': '4h', 'limit': 600, 'min_interval_seconds': 3 * 3600},
-    '1d': {'interval': '1d', 'limit': 400, 'min_interval_seconds': 23 * 3600},
+    '4h': {'interval': '4h', 'limit': 1500, 'lookback': 1200, 'min_interval_seconds': 3 * 3600},
+    '1d': {'interval': '1d', 'limit': 1000, 'lookback': 800, 'min_interval_seconds': 23 * 3600},
 }
 
-# Orthogonale, stationaire features voor de Quant Worker
+# Stationaire features. funding_rate en orderbook_imbalance zijn verwijderd: ze waren één live
+# snapshot over de hele historie (constante kolom) en dus informatieloos.
 base_features = [
-    'return_1', 'RSI', 'atr_ratio', 'bb_position', 'MACD_hist', 
-    'OBV_slope', 'VWAP_dist', 'funding_rate', 'orderbook_imbalance'
+    'return_1', 'return_3', 'RSI', 'atr_ratio', 'bb_position', 'MACD_hist',
+    'OBV_slope', 'VWAP_dist', 'vol_ratio',
 ]
 
 MODEL_NAMES = ['xgb', 'cat', 'rf']
+LEARNING_RATE = 0.03
 
-HOLDOUT_FRACTION = 0.25
-MIN_HOLDOUT = 30
-MIN_TRAIN_ROWS = 60
+# --- Validatie: expanding walk-forward met embargo ---
+LABEL_HORIZON = 3          # label = rendement over 3 candles (overlappend)
+EMBARGO = LABEL_HORIZON    # gat tussen train en test, tegen label-overlap
+OOS_FRACTION = 0.50        # laatste 50% van het venster is out-of-sample, verdeeld over folds
+WF_FOLDS = 4
+MIN_FOLD_SIZE = 25
+MIN_TRAIN_ROWS = 120
 MIN_FEATURE_ROWS = 100
+MIN_LOOKBACK = 300
+
+QUANT_MIN_Z = float(os.environ.get('QUANT_MIN_Z', 1.28))       # one-sided ~90%
+QUANT_MIN_JOINT_N = int(os.environ.get('QUANT_MIN_JOINT_N', 30))
 
 SL_ATR_MULT = 2.5
 TP_ATR_MULT = 5.0
@@ -109,55 +93,14 @@ exchange = ccxt.kucoinfutures({
     'enableRateLimit': True,
 })
 
-def safe_div(num, den):
-    if den is None or pd.isna(den) or abs(float(den)) < 1e-12:
-        return 0.0
-    return float(num) / float(den)
 
+STATE_VERSION = 3  # Verhoog dit getal bij ingrijpende logica-updates om oude states automatisch te resetten
 
-def fetch_market_context_from_exchange(exch, symbol):
-    funding = 0.0
-    orderbook_imbalance = 0.0
-    swap_symbol = f"{symbol}:USDT" if not symbol.endswith(":USDT") else symbol
-
-    try:
-        fr = exch.fetch_funding_rate(swap_symbol)
-        if fr and 'fundingRate' in fr:
-            funding = float(fr['fundingRate'])
-    except Exception:
-        try:
-            time.sleep(0.3)
-            fr = exch.fetch_funding_rate(symbol)
-            if fr and 'fundingRate' in fr:
-                funding = float(fr['fundingRate'])
-        except Exception:
-            pass
-
-    time.sleep(0.3)
-    try:
-        orderbook = exch.fetch_order_book(symbol, limit=20)
-        if orderbook and 'bids' in orderbook and 'asks' in orderbook:
-            bids_vol = sum([b[1] for b in orderbook['bids'][:10]])
-            asks_vol = sum([a[1] for a in orderbook['asks'][:10]])
-            orderbook_imbalance = (bids_vol - asks_vol) / (bids_vol + asks_vol + 1e-8)
-    except Exception:
-        pass
-
-    return funding, orderbook_imbalance
-
-
-STATE_VERSION = 2  # Verhoog dit getal bij ingrijpende logica-updates om oude states automatisch te resetten
 
 def default_state():
     return {
         'state_version': STATE_VERSION,
-        'learning_rate': 0.03,
-        'lookback_window': 350,
         'current_regime': 'trending',
-        'regime_features': {
-            'trending': base_features.copy(),
-            'sideways': base_features.copy(),
-        },
         'active_features': base_features.copy(),
         'last_trained_timestamp': 0,
         'model_weights': {m: 1.0 / len(MODEL_NAMES) for m in MODEL_NAMES},
@@ -170,8 +113,12 @@ def default_state():
         'signal': 'none',
         'signal_probability': 50.0,
         'holdout_direction_accuracy': None,
+        'holdout_direction_z': None,
         'holdout_classifier_accuracy': None,
         'holdout_samples': 0,
+        'joint_signal_accuracy': None,
+        'joint_signal_samples': 0,
+        'joint_signal_z': None,
         'atr': 0.0,
         'atr_pct': 0.0,
         'last_close': None,
@@ -182,20 +129,21 @@ def default_state():
         'updated_at': 0,
     }
 
+
 def load_or_init_state(state_file):
     state = default_state()
     if os.path.exists(state_file):
         try:
             with open(state_file, 'r', encoding='utf-8') as f:
                 loaded = json.load(f)
-            
+
             if isinstance(loaded, dict) and loaded.get('state_version', 1) == STATE_VERSION:
                 state.update(loaded)
             else:
                 print(f"🔄 Oude of incompatibele state gedetecteerd voor {state_file}. Reset naar v{STATE_VERSION} defaults.")
-        except Exception:
-            pass
-            
+        except Exception as e:
+            print(f"⚠️ State {state_file} onleesbaar ({e}); start met defaults.")
+
     if state.get('data_status') in (None, 'new'):
         state['last_trained_timestamp'] = 0
     return state
@@ -222,20 +170,23 @@ def save_state(state_file, state):
 
 
 def fetch_data_safely(symbol, tf_info):
+    """Gepagineerd ophalen (genoeg historie voor walk-forward). De lopende candle wordt altijd verwijderd."""
     try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf_info['interval'], limit=tf_info['limit'])
+        df = fetch_ohlcv_paginated(exchange, symbol, tf_info['interval'], tf_info['limit'])
+        if len(df) >= 5:
+            return df
+        # Fallback: één enkele call
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf_info['interval'], limit=200)
         if not ohlcv or len(ohlcv) < 5:
             return pd.DataFrame()
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        # KRITISCH: Verwijder altijd de incomplete lopende bar om repainting te voorkomen
-        df = df.iloc[:-1].reset_index(drop=True)
-        return df
+        return df.iloc[:-1].reset_index(drop=True)  # KRITISCH: incomplete bar weg (repainting)
     except Exception as e:
         print(f"❌ KuCoin Futures fetch fout voor {symbol}: {e}")
         return pd.DataFrame()
 
 
-def compute_features(df, funding=0.0, ob_imbalance=0.0):
+def compute_features(df):
     df = df.copy()
     close = df['close']
     high = df['high']
@@ -243,6 +194,7 @@ def compute_features(df, funding=0.0, ob_imbalance=0.0):
 
     sma20 = close.rolling(window=20).mean()
     df['return_1'] = close.pct_change()
+    df['return_3'] = close.pct_change(3)
 
     delta = close.diff()
     gain = delta.where(delta > 0, 0.0)
@@ -266,7 +218,8 @@ def compute_features(df, funding=0.0, ob_imbalance=0.0):
     ema_26 = close.ewm(span=26, adjust=False).mean()
     macd_line = ema_12 - ema_26
     macd_signal = macd_line.ewm(span=9, adjust=False).mean()
-    df['MACD_hist'] = macd_line - macd_signal
+    # Genormaliseerd op prijs -> stationair en vergelijkbaar over tijd
+    df['MACD_hist'] = (macd_line - macd_signal) / (close + 1e-8) * 100.0
 
     obv = (np.sign(close.diff()) * df['volume']).fillna(0).cumsum()
     df['OBV_slope'] = obv.diff(3) / (df['volume'].rolling(20).mean() + 1e-8)
@@ -275,8 +228,7 @@ def compute_features(df, funding=0.0, ob_imbalance=0.0):
     vwap = (typical_price * df['volume']).rolling(20).sum() / (df['volume'].rolling(20).sum() + 1e-8)
     df['VWAP_dist'] = (close - vwap) / (vwap + 1e-8)
 
-    df['funding_rate'] = float(funding)
-    df['orderbook_imbalance'] = float(ob_imbalance)
+    df['vol_ratio'] = df['volume'] / (df['volume'].rolling(20).mean() + 1e-8)
     df['ATR'] = atr
 
     return df.replace([np.inf, -np.inf], np.nan)
@@ -286,12 +238,13 @@ def get_market_regime(df):
     try:
         if 'atr_ratio' in df.columns and not pd.isna(df['atr_ratio'].iloc[-1]):
             return 'trending' if df['atr_ratio'].iloc[-1] > 1.5 else 'sideways'
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"⚠️ Regime-detectie mislukt: {e}")
     return 'trending'
 
 
-def make_regressors(lr):
+def make_regressors():
+    lr = LEARNING_RATE
     return {
         'xgb': xgb.XGBRegressor(learning_rate=lr, max_depth=3, n_estimators=40, random_state=42, verbosity=0, n_jobs=1),
         'cat': CatBoostRegressor(learning_rate=lr, depth=3, iterations=40, random_seed=42, verbose=0, thread_count=1),
@@ -299,8 +252,8 @@ def make_regressors(lr):
     }
 
 
-def make_classifier(lr):
-    return xgb.XGBClassifier(learning_rate=lr, n_estimators=25, max_depth=2, random_state=42,
+def make_classifier():
+    return xgb.XGBClassifier(learning_rate=LEARNING_RATE, n_estimators=25, max_depth=2, random_state=42,
                              eval_metric='logloss', verbosity=0, n_jobs=1)
 
 
@@ -310,70 +263,102 @@ def usable_features(df, feats):
 
 def build_dataset(df, feats, lookback):
     d = df.dropna(subset=feats + ['close', 'ATR']).reset_index(drop=True)
-    if len(d) < lookback + 10:
+    lb = min(int(lookback), len(d) - LABEL_HORIZON - 10)
+    if lb < MIN_LOOKBACK:
         return None
-    X = d[feats].iloc[:-3]
-    y = (d['close'].shift(-3) / d['close'] - 1.0).iloc[:-3]
-    X = X.iloc[-lookback:]
-    y = y.iloc[-lookback:]
+    X = d[feats].iloc[:-LABEL_HORIZON]
+    y = (d['close'].shift(-LABEL_HORIZON) / d['close'] - 1.0).iloc[:-LABEL_HORIZON]
+    X = X.iloc[-lb:]
+    y = y.iloc[-lb:]
     latest = d[feats].iloc[[-1]]
     return X, y, latest
 
 
-def evaluate_config(X, y, lr):
-    n = len(X)
-    h = max(MIN_HOLDOUT, int(n * HOLDOUT_FRACTION))
-    if n - h < MIN_TRAIN_ROWS:
+def _z_vs_half(acc, n_obs):
+    """z-score van een hit-rate tegen 50%, met n_obs gecorrigeerd voor label-overlap."""
+    n_eff = n_obs / float(LABEL_HORIZON)
+    if acc is None or n_eff <= 0:
         return None
-    Xtr, Xte, ytr, yte = X.iloc[:-h], X.iloc[-h:], y[:-h], y[-h:]
+    return float((acc - 0.5) / math.sqrt(0.25 / n_eff))
 
-    preds, maes = {}, {}
-    for name, model in make_regressors(lr).items():
-        model.fit(Xtr, ytr)
-        p = np.asarray(model.predict(Xte), dtype=float)
-        preds[name] = p
-        maes[name] = float(np.mean(np.abs(p - yte)))
+
+def walk_forward_eval(X, y):
+    """Expanding walk-forward met embargo. Elke OOS-voorspelling komt uit een model dat getraind is
+    op data die minimaal EMBARGO candles vóór de testfold eindigt."""
+    n = len(X)
+    oos_n = int(n * OOS_FRACTION)
+    fold = oos_n // WF_FOLDS
+    if fold < MIN_FOLD_SIZE or (n - oos_n - EMBARGO) < MIN_TRAIN_ROWS:
+        return None
+
+    starts = [n - oos_n + k * fold for k in range(WF_FOLDS)]
+    ends = starts[1:] + [n]
+
+    preds = {name: [] for name in MODEL_NAMES}
+    ys, ps = [], []
+    for s, e in zip(starts, ends):
+        tr_end = s - EMBARGO
+        Xtr, ytr = X.iloc[:tr_end], y.iloc[:tr_end]
+        Xte, yte = X.iloc[s:e], y.iloc[s:e]
+        for name, model in make_regressors().items():
+            model.fit(Xtr, ytr)
+            preds[name].append(np.asarray(model.predict(Xte), dtype=float))
+        ytr_c = (ytr > 0).astype(int)
+        if ytr_c.nunique() == 2:
+            clf = make_classifier()
+            clf.fit(Xtr, ytr_c)
+            ps.append(clf.predict_proba(Xte)[:, 1])
+        else:
+            ps.append(np.full(len(Xte), np.nan))
+        ys.append(np.asarray(yte, dtype=float))
+
+    y_all = np.concatenate(ys)
+    p_all = np.concatenate(ps)
+    preds = {k: np.concatenate(v) for k, v in preds.items()}
+    maes = {k: float(np.mean(np.abs(v - y_all))) for k, v in preds.items()}
 
     inv = {k: 1.0 / (v + 1e-9) for k, v in maes.items()}
     tot = sum(inv.values())
     weights = {k: float(v / tot) for k, v in inv.items()}
 
     ens = sum(weights[k] * preds[k] for k in preds)
-    y_arr = np.asarray(yte)
-    ens_mae = float(np.mean(np.abs(ens - y_arr)))
-    zero_mae = float(np.mean(np.abs(y_arr))) + 1e-12
-    dir_acc = float(np.mean(np.sign(ens) == np.sign(y_arr)))
+    ens_mae = float(np.mean(np.abs(ens - y_all)))
+    zero_mae = float(np.mean(np.abs(y_all))) + 1e-12
+    dir_acc = float(np.mean(np.sign(ens) == np.sign(y_all)))
 
-    clf_acc = None
-    ytr_c = (ytr > 0).astype(int)
-    if len(np.unique(ytr_c)) == 2:
-        try:
-            clf = make_classifier(lr)
-            clf.fit(Xtr, ytr_c)
-            p_up = clf.predict_proba(Xte)[:, 1]
-            clf_acc = float(np.mean((p_up > 0.5) == (y_arr > 0)))
-        except Exception:
-            pass
+    valid_p = ~np.isnan(p_all)
+    clf_acc = float(np.mean((p_all[valid_p] > 0.5) == (y_all[valid_p] > 0))) if valid_p.any() else None
+
+    # Het signaal dat daadwerkelijk getraded wordt = regressor én classifier eens. Toets DAT signaal.
+    long_m = (ens > 0) & (p_all >= 0.52)
+    short_m = (ens < 0) & (p_all <= 0.48)
+    sel = long_m | short_m
+    joint_n = int(sel.sum())
+    joint_acc = float(np.mean(np.sign(ens[sel]) == np.sign(y_all[sel]))) if joint_n else None
 
     return {
         'weights': weights,
         'maes': maes,
         'skill': ens_mae / zero_mae,
         'dir_acc': dir_acc,
+        'dir_z': _z_vs_half(dir_acc, len(y_all)),
         'clf_acc': clf_acc,
-        'holdout_n': int(h),
+        'joint_n': joint_n,
+        'joint_acc': joint_acc,
+        'joint_z': _z_vs_half(joint_acc, joint_n) if joint_n else None,
+        'holdout_n': int(len(y_all)),
     }
 
 
-def score_config(df, cfg):
-    feats = usable_features(df, cfg['features'])
+def score_config(df, feats_wanted, lookback):
+    feats = usable_features(df, feats_wanted)
     if not feats:
         return None
-    ds = build_dataset(df, feats, cfg['lookback_window'])
+    ds = build_dataset(df, feats, lookback)
     if ds is None:
         return None
     X, y, _ = ds
-    res = evaluate_config(X, y, cfg['learning_rate'])
+    res = walk_forward_eval(X, y)
     if res is not None:
         res['features_used'] = feats
     return res
@@ -381,54 +366,47 @@ def score_config(df, cfg):
 
 def _insufficient(state, now):
     state.update({
-        'data_status': 'insufficient_data', 
-        'signal': 'none', 
+        'data_status': 'insufficient_data',
+        'signal': 'none',
         'signal_probability': 50.0,
-        'last_prediction': None, 
+        'last_prediction': None,
         'last_prediction_price': None,
-        'last_trained_timestamp': now, 
+        'last_trained_timestamp': now,
         'last_candle_ts': 0,
         'updated_at': int(now)
     })
     return state
 
 
-def process(df_raw, state, now, symbol):
+def process(df_raw, state, now, symbol, tf_info):
     if len(df_raw) < MIN_FEATURE_ROWS:
         return _insufficient(state, now), False
 
-    funding, ob_imbalance = fetch_market_context_from_exchange(exchange, symbol)
-    df = compute_features(df_raw, funding=funding, ob_imbalance=ob_imbalance)
+    df = compute_features(df_raw)
 
     regime = get_market_regime(df)
     state['current_regime'] = regime
 
-    best_cfg = {
-        'learning_rate': float(state['learning_rate']),
-        'lookback_window': int(state['lookback_window']),
-        'features': list(state['regime_features'].get(regime, base_features)),
-    }
-    best_res = score_config(df, best_cfg)
+    lookback = tf_info['lookback']
+    res = score_config(df, base_features, lookback)
 
-    if best_res is None or best_res['skill'] >= 1.0 or best_res['dir_acc'] < 0.50:
+    if res is None or res['skill'] >= 1.0 or res['dir_acc'] < 0.50:
         return _insufficient(state, now), False
 
-    chosen_cfg, chosen_res = best_cfg, best_res
-    feats = chosen_res['features_used']
-    ds = build_dataset(df, feats, chosen_cfg['lookback_window'])
+    feats = res['features_used']
+    ds = build_dataset(df, feats, lookback)
     if ds is None:
         return _insufficient(state, now), False
 
     X, y, latest = ds
-    lr = chosen_cfg['learning_rate']
-    weights = chosen_res['weights']
+    weights = res['weights']
 
     pred_ret = {}
-    latest_arr = latest.to_numpy() if hasattr(latest, 'to_numpy') else np.asarray(latest)
+    latest_arr = latest.to_numpy()
     if latest_arr.ndim == 1:
         latest_arr = latest_arr.reshape(1, -1)
 
-    for name, model in make_regressors(lr).items():
+    for name, model in make_regressors().items():
         model.fit(X, y)
         pred_ret[name] = float(model.predict(latest_arr)[0])
     ens_ret = float(sum(weights[k] * pred_ret[k] for k in pred_ret))
@@ -437,10 +415,11 @@ def process(df_raw, state, now, symbol):
     y_cls = (y > 0).astype(int)
     if len(np.unique(y_cls)) == 2:
         try:
-            clf = make_classifier(lr)
+            clf = make_classifier()
             clf.fit(X, y_cls)
             prob_up = float(clf.predict_proba(latest_arr)[0][1] * 100)
-        except Exception:
+        except Exception as e:
+            print(f"⚠️ Classifier-fit mislukt voor {symbol}: {e}")
             prob_up = 50.0
 
     last_close = float(df['close'].iloc[-1])
@@ -452,7 +431,14 @@ def process(df_raw, state, now, symbol):
     clf_up = prob_up >= 52.0
     clf_down = prob_up <= 48.0
 
-    has_edge = chosen_res['dir_acc'] >= 0.52 and chosen_res['skill'] < 0.98
+    # Edge = het getrade signaal (regressor+classifier eens) is OOS significant beter dan 50%
+    joint_z = res['joint_z']
+    has_edge = (
+        res['skill'] < 1.0
+        and res['joint_n'] >= QUANT_MIN_JOINT_N
+        and joint_z is not None
+        and joint_z >= QUANT_MIN_Z
+    )
 
     if has_edge and reg_up and clf_up:
         signal, sig_prob = 'long', prob_up
@@ -464,12 +450,17 @@ def process(df_raw, state, now, symbol):
     sign = 1 if reg_up else -1
 
     state.update({
-        'learning_rate': lr,
-        'lookback_window': chosen_cfg['lookback_window'],
         'active_features': feats,
         'model_weights': weights,
-        'baseline_error': chosen_res['skill'],
-        'holdout_direction_accuracy': chosen_res['dir_acc'],
+        'model_errors': res['maes'],
+        'baseline_error': res['skill'],
+        'holdout_direction_accuracy': res['dir_acc'],
+        'holdout_direction_z': res['dir_z'],
+        'holdout_classifier_accuracy': res['clf_acc'],
+        'holdout_samples': res['holdout_n'],
+        'joint_signal_accuracy': res['joint_acc'],
+        'joint_signal_samples': res['joint_n'],
+        'joint_signal_z': joint_z,
         'last_close': last_close,
         'last_prediction': last_close * (1.0 + ens_ret),
         'last_prediction_price': last_close * (1.0 + ens_ret),
@@ -490,35 +481,13 @@ def process(df_raw, state, now, symbol):
 
 
 def push_to_github(files):
-    token = os.environ.get('GITHUB_TOKEN')
-    if not token or not files:
+    if not os.environ.get('GITHUB_TOKEN') or not files:
         return
     for fname in files:
         try:
             with open(fname, 'rb') as f:
-                local = f.read()
-            sha = None
-            try:
-                remote = json.loads(urllib.request.urlopen(urllib.request.Request(
-                    f'https://api.github.com/repos/{GITHUB_REPO}/contents/{fname}?ref={GITHUB_BRANCH}',
-                    headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'}
-                )).read().decode('utf-8'))
-                sha = remote.get('sha')
-            except Exception:
-                pass
-            payload = {
-                'message': f'Auto-update {fname} [skip ci]',
-                'content': base64.b64encode(local).decode('ascii'),
-                'branch': GITHUB_BRANCH,
-            }
-            if sha:
-                payload['sha'] = sha
-            urllib.request.urlopen(urllib.request.Request(
-                f'https://api.github.com/repos/{GITHUB_REPO}/contents/{fname}',
-                data=json.dumps(payload).encode('utf-8'),
-                headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'},
-                method='PUT'
-            ))
+                content = f.read()
+            github_put(fname, content, agent='v20-quant-worker')
         except Exception as e:
             print(f"❌ Push van {fname} mislukt: {e}")
 
@@ -537,7 +506,7 @@ def main():
     written = []
     for symbol in symbols_scope:
         asset = symbol.split('/')[0].split(':')[0]
-        
+
         for tf_name, tf_info in timeframes.items():
             state_file = f'model_state_{asset.lower()}_{tf_name}.json'
             try:
@@ -548,9 +517,12 @@ def main():
                 df_raw = fetch_data_safely(symbol, tf_info)
                 if df_raw.empty:
                     continue
-                state, ok = process(df_raw, state, now, symbol)
+                state, ok = process(df_raw, state, now, symbol, tf_info)
                 save_state(state_file, state)
                 written.append(state_file)
+                print(f"📊 {asset} {tf_name}: status={state['data_status']} signal={state['signal']} "
+                      f"skill={state.get('baseline_error')} joint_z={state.get('joint_signal_z')} "
+                      f"n_joint={state.get('joint_signal_samples')} rows={len(df_raw)}")
                 gc.collect()
                 time.sleep(3.0)
             except Exception as e:
