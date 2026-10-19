@@ -109,14 +109,15 @@ COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 7200))
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 
-MAX_CONCURRENT_POSITIONS = 2
+# Dynamisch instelbaar via Render Environment Variables (standaard 5)
+MAX_CONCURRENT_POSITIONS = int(os.environ.get('MAX_CONCURRENT_POSITIONS', 5))
 MIN_RRR = 3.0
 TP_ATR_mult_BASE = 5.0
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 
 active_trades = {}
 symbol_cooldowns = {}
-symbol_last_traded_candles = {}  # Geheugen om re-entry op dezelfde 4h candle te blokkeren
+symbol_last_traded_candles = {}
 
 exchange = ccxt.kucoinfutures({
     'apiKey': os.getenv('KUCOIN_API_KEY', ''),
@@ -508,13 +509,11 @@ def evaluate_and_trade(asset, symbol):
         print(f"   ⏳ {symbol}: Geen S&R pattern state gevonden voor 4h.")
         return
 
-    # --- CANDLE TIMESTAMP LOCK CHECK (VOORKOMT STALE RE-ENTRIES) ---
     candle_ts = int(pattern_st.get('last_candle_ts', 0))
     last_traded_ts = symbol_last_traded_candles.get(symbol, 0)
     if candle_ts > 0 and candle_ts <= last_traded_ts:
         print(f"   ⏳ {symbol}: Re-entry geblokkeerd. Dezelfde 4h candle ({candle_ts}) is reeds verhandeld.")
         return
-    # -------------------------------------------------------------
 
     price = float(exchange.fetch_ticker(symbol)['last'])
     atr_pct = float(state_4h.get('atr_pct') or 0.0)
@@ -577,7 +576,6 @@ def evaluate_and_trade(asset, symbol):
         order = execute_with_retry(lambda: exchange.create_order(symbol, 'limit', side, amount, limit_price, params))
         print(f"   🚀 SUCCES: Limit order geplaatst voor {symbol} ({side} {amount} contracten @ {limit_price})!")
         
-        # Sla op dat deze 4h candle nu officieel verhandeld is
         if candle_ts > 0:
             symbol_last_traded_candles[symbol] = candle_ts
 
