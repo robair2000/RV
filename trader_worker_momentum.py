@@ -457,6 +457,12 @@ def evaluate_and_trade_reversal(asset, symbol):
     except Exception:
         return
 
+    # TWM Reversal Logica met ADX Trend-Filter (Voorkomt de Band Walk trap)
+    adx_4h = float(pst.get('adx_4h', 20.0))
+    if adx_4h > 28.0:
+        # Markt is te trendend; mean-reversion/fading is te riskant!
+        return
+
     atr_pct = float(pst.get('atr_pct', 2.0))
     atr = price * (atr_pct / 100.0)
     is_long = (twm_signal == 'long')
