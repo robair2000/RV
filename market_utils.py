@@ -109,3 +109,34 @@ def fetch_cached_1d_shared(exchange, symbol, asset, total_bars=450, max_age_seco
             print(f"⚠️ Kon 1d cache niet wegschrijven/pushten voor {asset}: {e}")
 
     return df
+
+
+def fetch_cached_4h_shared(exchange, symbol, asset, total_bars=2000, max_age_seconds=14400):
+    """Haalt 4h candles op via lokale cache (geldig voor 4 uur) om rate limits bij meta-training te voorkomen."""
+    cache_file = f"shared_cache_4h_{asset.lower()}.json"
+    now = time.time()
+
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cached = json.load(f)
+            if now - cached.get('timestamp', 0) < max_age_seconds:
+                df = pd.DataFrame(cached['data'])
+                if not df.empty:
+                    return df
+        except Exception:
+            pass
+
+    df = fetch_ohlcv_paginated(exchange, symbol, '4h', total_bars=total_bars)
+    if not df.empty:
+        try:
+            payload = {
+                'timestamp': now,
+                'data': df.to_dict(orient='records')
+            }
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(payload, f)
+        except Exception as e:
+            print(f"⚠️ Kon 4h cache niet wegschrijven voor {asset}: {e}")
+
+    return df
