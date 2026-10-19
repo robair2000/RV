@@ -96,14 +96,18 @@ exchange = ccxt.kucoinfutures({'enableRateLimit': True})
 def fetch_historical_candles(symbol, timeframe, limit=250):
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        if not ohlcv:
+        if not ohlcv or len(ohlcv) < 2:
             return pd.DataFrame()
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        return df.reset_index(drop=True)
+        
+        # KRITISCHE FIX: Verwijder altijd de huidige, incomplete (lopende) candle om repainting 
+        # en vertekende volume-expansie ratio's te voorkomen! (Net zoals in quant_worker)
+        df = df.iloc[:-1].reset_index(drop=True)
+        
+        return df
     except Exception as e:
         print(f"⚠️ Fout bij ophalen candles voor {symbol} ({timeframe}): {e}")
         return pd.DataFrame()
-
 
 def compute_smart_indicators(df):
     close = df['close']
