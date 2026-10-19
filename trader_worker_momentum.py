@@ -113,7 +113,6 @@ COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 3600))  # 1 uur cooldo
 
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
-EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
 MAX_CONCURRENT_POSITIONS = 2
 TP_ATR_MULT_BASE = 8.0  # Ruime Take Profit voor Explosive Moves
@@ -123,12 +122,12 @@ MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 active_trades = {}
 symbol_cooldowns = {}
 
-exchange = getattr(ccxt, EXCHANGE_ID)({
+# GEBRUIK NU STRICT KUCOIN FUTURES VOOR CORRECTE SWAP ENDPOINTS
+exchange = ccxt.kucoinfutures({
     'apiKey': os.getenv('KUCOIN_API_KEY', ''),
     'secret': os.getenv('KUCOIN_API_SECRET', ''),
     'password': os.getenv('KUCOIN_API_PASSWORD', ''),
     'enableRateLimit': True,
-    'options': {'defaultType': 'swap'},
 })
 
 
@@ -423,7 +422,6 @@ def execute_live_trades_scan(symbols):
         return
 
     for symbol in symbols:
-        # Als de munt niet bestaat, al een actieve positie heeft, of op cooldown staat -> OVERSLAAN (continue)
         if symbol not in exchange.markets or symbol in active_symbols or symbol in symbol_cooldowns:
             continue
             
@@ -452,12 +450,9 @@ def evaluate_and_trade_sniper(asset, symbol):
 
     print(f"   🎯 TWM Sniper Check {symbol}: Signal={boss_signal.upper()} | Score={boss_score} | VolRatio={vol_expansion} | Squeeze={is_squeeze}")
 
-    # PURE SNIPER EISEN:
-    # 1. Er moet een geldig signaal zijn ('long' of 'short') met voldoende Boss Score.
     if boss_signal not in ('long', 'short') or boss_score < MIN_BOSS_SCORE:
         return
 
-    # 2. Er moet sprake zijn van een volume-expansie of een Bollinger Squeeze uitbraak!
     if vol_expansion < MIN_VOLUME_EXPANSION and not is_squeeze:
         print(f"   🚫 TWM Sniper VETO {symbol}: Geen volume-piek ({vol_expansion}) en geen Bollinger Squeeze.")
         return
@@ -467,7 +462,7 @@ def evaluate_and_trade_sniper(asset, symbol):
     except Exception:
         return
 
-    atr = price * 0.02  # Standaard schatting op basis van koers
+    atr = price * 0.02
     is_long = (boss_signal == 'long')
     sgn = 1 if is_long else -1
     stop_loss_val = price - sgn * TRAILING_SL_MULT * atr
