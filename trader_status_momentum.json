@@ -1,23 +1,23 @@
 {
-  "updated_at": 1792393898.5229135,
+  "updated_at": 1792395534.6635783,
   "active_trades": {
-    "DOGE/USDT:USDT": {
+    "SOL/USDT:USDT": {
       "side": "long",
-      "entry": 0.07912,
-      "peak": 0.07988,
-      "atr": 0.001220330834145848,
-      "sl": 0.07545900749756246,
-      "tp": 0.08888264667316678,
+      "entry": 105.757,
+      "peak": 105.886,
+      "atr": 2.1151400000000002,
+      "sl": 99.41158,
+      "tp": 122.67812,
       "trailing_mult": 3.0,
       "breakeven_secured": false
     },
-    "SOL/USDT:USDT": {
+    "DOGE/USDT:USDT": {
       "side": "long",
-      "entry": 105.764,
-      "peak": 105.764,
-      "atr": 2.0090131532230084,
-      "sl": 99.73696054033097,
-      "tp": 121.83610522578407,
+      "entry": 0.07912,
+      "peak": 0.08,
+      "atr": 0.0015823999999999999,
+      "sl": 0.07437279999999999,
+      "tp": 0.09177919999999999,
       "trailing_mult": 3.0,
       "breakeven_secured": false
     }
