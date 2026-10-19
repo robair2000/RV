@@ -211,10 +211,15 @@ def detect_support_resistance_and_sd(df):
     }
 
 
-def train_meta_classifier(df):
+def train_meta_classifier(df, direction='long'):
     df = df.copy()
     df['returns'] = df['close'].pct_change(3).shift(-3)
-    df['target'] = (df['returns'] > 0.005).astype(int)
+    
+    # Symmetrische target: voor longs kijken we naar > +0.5%, voor shorts naar < -0.5%
+    if direction == 'long':
+        df['target'] = (df['returns'] > 0.005).astype(int)
+    else:
+        df['target'] = (df['returns'] < -0.005).astype(int)
     
     df['sma20'] = df['close'].rolling(20).mean()
     df['atr'] = (df['high'] - df['low']).rolling(14).mean()
@@ -245,7 +250,6 @@ def train_meta_classifier(df):
         prob = 0.5
         
     return prob
-
 
 def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
     if df_4h is None or len(df_4h) < 60 or df_1d is None or len(df_1d) < 60:
