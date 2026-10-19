@@ -245,26 +245,52 @@ def close_position(symbol, side, contracts):
         return False
 
 
-def update_exchange_stop_loss(symbol, side, contracts, new_sl):
+def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=None):
     if DRY_RUN:
-        return
+        return None
     try:
         close_side = 'sell' if side == 'long' else 'buy'
+        
+        # 1. Plaats direct de nieuwe Stop Loss order
         new_order = exchange.create_order(symbol, 'stop', close_side, contracts, None, {
             'stopPrice': new_sl,
             'reduceOnly': True
         })
         new_order_id = new_order.get('id') if new_order else None
 
+        # 2. Annuleer ALLEEN de specifieke oude SL-order (indien ID bekend) of filter strict op SL
         open_orders = exchange.fetch_open_orders(symbol)
         for o in open_orders:
-            if o.get('id') != new_order_id and (o.get('type') == 'stop' or 'stop' in str(o.get('info', {})).lower()):
+            order_id = o.get('id')
+            order_type = str(o.get('type', '')).lower()
+            info_str = str(o.get('info', {})).lower()
+            
+            # Als we een specifiek oud SL-order ID hebben, annuleer alleen die
+            if old_sl_order_id and order_id == old_sl_order_id:
                 try:
-                    exchange.cancel_order(o['id'], symbol)
+                    exchange.cancel_order(order_id, symbol)
                 except Exception:
                     pass
+                continue
+            
+            # Anders: zoek op basis van kenmerken, maar BLIJF AF van Take Profit orders!
+            # Op KuCoin kun je vaak herkennen of het een stop-loss is t.o.v. take-profit 
+            # door te kijken naar de trigger price ten opzichte van de huidige marktprijs.
+            if order_id != new_order_id and ('stop' in order_type or 'stop' in info_str):
+                # Extra veiligheid: zorg dat we geen TP orders raken (een TP ligt *boven* entry voor long, SL *onder*)
+                # Om het simpel en robuust te houden slaan we orders over die expliciet als Take Profit zijn gemarkeerd.
+                if 'take profit' in info_str or 'tp' in info_str:
+                    continue
+                
+                try:
+                    exchange.cancel_order(order_id, symbol)
+                except Exception:
+                    pass
+                    
+        return new_order_id
     except Exception as e:
-        print(f"⚠️ TWM Sniper: Kon stop-loss niet bijwerken voor {symbol}: {e}")
+        print(f"⚠️ Kon exchange stop-loss niet bijwerken voor {symbol}: {e}")
+        return None
 
 
 def manage_open_positions_and_trailing_stops(symbols):
