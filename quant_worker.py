@@ -105,10 +105,9 @@ MIN_FEATURE_ROWS = 60
 SL_ATR_MULT = 2.5
 TP_ATR_MULT = 5.0
 
-# Strenge initialisatie als lineaire swap exchange
-exchange = ccxt.kucoin({
+# GEBRUIK NU STRICT KUCOIN FUTURES VOOR CORRECTE SWAP ENDPOINTS
+exchange = ccxt.kucoinfutures({
     'enableRateLimit': True,
-    'options': {'defaultType': 'swap'}
 })
 
 def safe_div(num, den):
@@ -232,7 +231,7 @@ def fetch_data_safely(symbol, tf_info):
         df['Date'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df.reset_index(drop=True)
     except Exception as e:
-        print(f"❌ KuCoin fetch fout voor {symbol}: {e}")
+        print(f"❌ KuCoin Futures fetch fout voor {symbol}: {e}")
         return pd.DataFrame()
 
 
