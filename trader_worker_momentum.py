@@ -100,7 +100,7 @@ TRAILING_SL_MULT = 2.0
 TWM_MIN_TP_ATR = float(os.environ.get('TWM_MIN_TP_ATR', 1.0))
 TWM_MIN_RRR = float(os.environ.get('TWM_MIN_RRR', 1.0))
 MAX_STATE_AGE_SECONDS = 8 * 3600
-MAX_CANDLE_AGE_SECONDS = 8.75 * 3600  # 4h bar + 4h buffer + marge
+MAX_CANDLE_AGE_SECONDS = 12.5 * 3600  # 4h bar + 4h buffer + marge
 
 active_trades = {}
 symbol_cooldowns = {}
