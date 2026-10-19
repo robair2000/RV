@@ -27,14 +27,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 try:
                     df = pd.read_csv(ranking_file)
                     html += df.to_html(index=False, classes='table', border=1)
-                    html += """
-                    <style>
-                        table.table { border-collapse: collapse; width: 100%; background: white; margin-top: 15px; }
-                        table.table th, table.table td { padding: 10px 15px; text-align: left; border-bottom: 1px solid #ddd; }
-                        table.table th { background-color: #4CAF50; color: white; }
-                        table.table tr:hover { background-color: #f1f1f1; }
-                    </style>
-                    """
                 except Exception as e:
                     html += f"<p style='color: red;'>⚠️ Fout bij lezen van CSV: {e}</p>"
             else:
@@ -101,7 +93,6 @@ def get_combined_trading_assets(top_n=5):
 
 TIMEFRAMES = ['4h', '1d']
 
-# --- CONFIGURATIE FUTURES SWING TRADING ---
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
 MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 84.0))
 COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 7200))
@@ -113,13 +104,12 @@ MAX_CONCURRENT_POSITIONS = int(os.environ.get('MAX_CONCURRENT_POSITIONS', 5))
 MIN_RRR = 3.0
 TP_ATR_mult_BASE = 5.0
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
-MAX_CANDLE_AGE_SECONDS = 4.5 * 3600  # Stricte candle leeftijd check (~4.5 uur)
+MAX_CANDLE_AGE_SECONDS = 8.75 * 3600  # 4h bar + 4h buffer + marge
 
 active_trades = {}
 symbol_cooldowns = {}
 symbol_last_traded_candles = {}
 
-# --- STATUS LADEN VANUIT GITHUB BIJ OPSTART ---
 def pull_status_from_github():
     global active_trades, symbol_cooldowns, symbol_last_traded_candles
     token = os.environ.get('GITHUB_TOKEN', '')
@@ -134,7 +124,7 @@ def pull_status_from_github():
             active_trades = data.get('active_trades', {})
             symbol_cooldowns = data.get('cooldowns', {})
             symbol_last_traded_candles = data.get('last_traded_candles', {})
-            print(f"📥 V20 Status hersteld van GitHub: {len(active_trades)} actieve trades.")
+            print(f"📥 V20 Status hersteld van GitHub: {len(active_trades)} actieve/pending trades.")
     except Exception:
         print("ℹ️ Geen eerdere V20 status gevonden op GitHub, starten met schone lei.")
 
@@ -260,14 +250,18 @@ def load_pattern_state(asset):
         return None
         
     updated_at = float(pst.get('updated_at', 0) or 0)
-    last_candle_ts = float(pst.get('last_candle_ts', 0) or 0)
+    last_candle_ts_ms = float(pst.get('last_candle_ts', 0) or 0)
     current_time = time.time()
 
     if current_time - updated_at > MAX_PATTERN_AGE_SECONDS:
         return None
-    if last_candle_ts > 0 and current_time - last_candle_ts > MAX_CANDLE_AGE_SECONDS:
-        print(f"⚠️ V20 Waarschuwing: Pattern state voor {asset} heeft te oude candle ({int((current_time - last_candle_ts)/3600)} uur oud).")
-        return None
+    
+    # Correcte omrekening van milliseconden naar seconden
+    if last_candle_ts_ms > 0:
+        candle_age_seconds = current_time - (last_candle_ts_ms / 1000.0)
+        if candle_age_seconds > MAX_CANDLE_AGE_SECONDS:
+            print(f"⚠️ V20 Waarschuwing: Pattern state voor {asset} heeft te oude candle ({int(candle_age_seconds/3600)} uur oud).")
+            return None
         
     return pst
 
@@ -278,7 +272,7 @@ def close_position(symbol, side, contracts):
         return True
     try:
         try:
-            open_orders = exchange.fetch_open_orders(symbol)
+            open_orders = execute_with_retry(lambda: exchange.fetch_open_orders(symbol))
             for o in open_orders:
                 c_id = str(o.get('clientOrderId', ''))
                 if 'v20_' in c_id:
@@ -310,7 +304,7 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
         })
         new_order_id = new_order.get('id') if new_order else None
 
-        open_orders = exchange.fetch_open_orders(symbol)
+        open_orders = execute_with_retry(lambda: exchange.fetch_open_orders(symbol))
         for o in open_orders:
             order_id = o.get('id')
             c_id = str(o.get('clientOrderId', ''))
@@ -344,13 +338,31 @@ def manage_open_positions_and_trailing_stops(symbols):
         if side not in ('long', 'short'):
             continue
             
-        # KRITISCHE FIX: Negeer posities die niet in onze eigen active_trades staan (voorkomt bot-gevechten!)
         trade = active_trades.get(symbol)
         if trade is None:
             continue
             
         open_symbols.add(symbol)
         entry = float(pos.get('entryPrice') or 0)
+
+        # Als de trade nog 'pending' was (limit order is nu gevuld!), zet direct SL en TP op de exchange
+        if trade.get('status') == 'pending':
+            print(f"🚀 V20: Limit order gevuld voor {symbol}! Plaats nu SL en TP.")
+            try:
+                close_side = 'sell' if side == 'long' else 'buy'
+                exchange.create_order(symbol, 'stop', close_side, contracts, None, {
+                    'stopPrice': trade['sl'],
+                    'reduceOnly': True,
+                    'clientOrderId': f"v20_sl_{int(time.time() * 1000)}"
+                })
+                exchange.create_order(symbol, 'limit', close_side, contracts, trade['tp'], {
+                    'reduceOnly': True,
+                    'clientOrderId': f"v20_tp_{int(time.time() * 1000)}"
+                })
+                trade['status'] = 'open'
+                state_changed = True
+            except Exception as e:
+                print(f"❌ Fout bij nabestellen SL/TP voor {symbol}: {e}")
 
         try:
             price = float(exchange.fetch_ticker(symbol)['last'])
@@ -395,7 +407,7 @@ def manage_open_positions_and_trailing_stops(symbols):
             stop_hit = price >= trade['sl']
             tp_hit = price <= trade['tp']
 
-        if trade['sl'] != old_sl:
+        if trade['sl'] != old_sl and trade.get('status') == 'open':
             update_exchange_stop_loss(symbol, side, contracts, trade['sl'])
             
         if stop_hit or tp_hit:
@@ -404,7 +416,25 @@ def manage_open_positions_and_trailing_stops(symbols):
                 active_trades.pop(symbol, None)
                 state_changed = True
                 
-    to_remove = [sym for sym in active_trades if sym not in open_symbols]
+    # Beveiligde pruning: wis alleen als er GEEN positie EN GEEN open limit order meer is
+    try:
+        open_orders = execute_with_retry(lambda: exchange.fetch_open_orders())
+        pending_symbols = {o['symbol'] for o in open_orders if o.get('status') == 'open'}
+    except Exception:
+        pending_symbols = set()
+
+    to_remove = []
+    for sym, trd in list(active_trades.items()):
+        if sym not in open_symbols:
+            if trd.get('status') == 'pending' and sym in pending_symbols:
+                # Laat pending limit order rustig staan
+                continue
+            # Als order verlopen is of helemaal niet meer bestaat, ruim op
+            if time.time() - trd.get('created_at', time.time()) > 1800: # 30 min max pending timeout
+                to_remove.append(sym)
+            elif trd.get('status') == 'open':
+                to_remove.append(sym)
+
     if to_remove:
         for sym in to_remove:
             active_trades.pop(sym, None)
@@ -442,12 +472,8 @@ def compute_contract_amount(asset, symbol, price, leverage):
 
     lots = math.floor(target_notional / per_contract_notional)
     if lots < max(1, min_amount):
-        print(f"⚠️ {symbol}: 1 contract = {per_contract_notional:.2f} USDT notional, doel {target_notional:.2f} "
-              f"({TRADE_AMOUNT_USDT} margin x {leverage}x). Verhoog TRADE_AMOUNT_USDT. Overgeslagen.")
         return None
 
-    used_margin = lots * per_contract_notional / leverage
-    print(f"📐 {symbol}: {lots} contract(en), notional {lots*per_contract_notional:.2f}, marge {used_margin:.2f} USDT @ {leverage}x")
     return float(lots)
 
 
@@ -478,23 +504,17 @@ def execute_live_trades_scan(symbols):
         if o.get('status') == 'open':
             pending_order_symbols.add(o.get('symbol'))
 
-    # Tel alleen eigen actieve posities mee voor het concurrency limiet
-    my_active_count = len([s for s in active_symbols if s in active_trades])
+    my_active_count = len([s for s in active_symbols if s in active_trades]) + len([s for s in pending_order_symbols if s in active_trades])
     if my_active_count >= MAX_CONCURRENT_POSITIONS:
-        print(f"ℹ️ V20 Maximaal aantal eigen actieve posities bereikt ({my_active_count}/{MAX_CONCURRENT_POSITIONS}).")
         return
 
     for symbol in symbols:
         if symbol not in exchange.markets or symbol in symbol_cooldowns:
             continue
-        # Als er al een positie op dit symbool loopt, skip
-        if symbol in active_symbols:
-            continue
-        if symbol in pending_order_symbols:
+        if symbol in active_symbols or symbol in pending_order_symbols:
             continue
         try:
             asset = symbol.split('/')[0].split(':')[0]
-            print(f"🔎 Evalueren van {symbol} (Asset: {asset})...")
             evaluate_and_trade(asset, symbol)
         except Exception as e:
             print(f"⚠️ Fout bij evalueren van {symbol}: {e}")
@@ -503,23 +523,19 @@ def execute_live_trades_scan(symbols):
 def evaluate_and_trade(asset, symbol):
     state_4h = load_state(asset, '4h')
     if state_4h is None:
-        print(f"   ⏳ {symbol}: Geen geldige 4h state gevonden of state is te oud.")
         return
 
     quant_signal = state_4h['signal']
     if quant_signal not in ('long', 'short'):
-        print(f"   ℹ️ {symbol}: Quant signaal is neutraal ('{quant_signal}').")
         return
 
     pattern_st = load_pattern_state(asset)
     if pattern_st is None:
-        print(f"   ⏳ {symbol}: Geen S&R pattern state gevonden voor 4h.")
         return
 
     candle_ts = int(pattern_st.get('last_candle_ts', 0))
     last_traded_ts = symbol_last_traded_candles.get(symbol, 0)
     if candle_ts > 0 and candle_ts <= last_traded_ts:
-        print(f"   ⏳ {symbol}: Re-entry geblokkeerd. Dezelfde 4h candle ({candle_ts}) is reeds verhandeld.")
         return
 
     price = float(exchange.fetch_ticker(symbol)['last'])
@@ -534,20 +550,14 @@ def evaluate_and_trade(asset, symbol):
     boss_trailing_mult = float(pattern_st.get('recommended_trailing_mult', 2.5))
     min_score_req = pattern_st.get('min_score_required', MIN_BOSS_SCORE)
 
-    print(f"   📊 {symbol}: Quant={quant_signal.upper()} | Boss={boss_signal.upper()} | Score={boss_score} (Min. vereist: {min_score_req})")
-
     if boss_signal != quant_signal or boss_score < min_score_req:
-        print(f"   🚫 {symbol}: VETO - Signalen komen niet overeen of score is te laag.")
         return
 
     is_long = (quant_signal == 'long')
-
     direction_prob = float(state_4h.get('direction_probability', 50.0))
     if is_long and direction_prob < 50.0:
-        print(f"   🚫 {symbol}: Quant kans op stijging te laag ({direction_prob}%).")
         return
     if not is_long and direction_prob > 50.0:
-        print(f"   🚫 {symbol}: Quant kans op daling te laag ({direction_prob}%).")
         return
 
     if is_long:
@@ -561,7 +571,6 @@ def evaluate_and_trade(asset, symbol):
     take_profit_val = limit_price + sgn * effective_tp_mult * atr
 
     if not ensure_margin_and_leverage(symbol, boss_leverage):
-        print(f"   ⚠️ {symbol}: Kon hefboom/margin mode niet instellen.")
         return
         
     amount = compute_contract_amount(asset, symbol, limit_price, boss_leverage)
@@ -574,43 +583,37 @@ def evaluate_and_trade(asset, symbol):
         return
 
     try:
-        # Plaats schone limit order zonder ingebedde sl/tp params om weesorders te voorkomen
+        # Plaats zuivere limit entry order. Geen reduceOnly SL/TP meesturen om KuCoin weigering te voorkomen!
         order = execute_with_retry(lambda: exchange.create_order(symbol, 'limit', side, amount, limit_price, {
             'marginMode': DESIRED_MARGIN_MODE,
             'clientOrderId': f"v20_entry_{int(time.time() * 1000)}"
         }))
-        
-        # Plaats direct expliciete SL en TP orders met unieke v20_ prefix
-        close_side = 'sell' if is_long else 'buy'
-        exchange.create_order(symbol, 'stop', close_side, amount, None, {
-            'stopPrice': stop_loss_val,
-            'reduceOnly': True,
-            'clientOrderId': f"v20_sl_{int(time.time() * 1000)}"
-        })
-        exchange.create_order(symbol, 'limit', close_side, amount, take_profit_val, {
-            'reduceOnly': True,
-            'clientOrderId': f"v20_tp_{int(time.time() * 1000)}"
-        })
 
-        print(f"   🚀 V20 SUCCES: Limit order + SL/TP geplaatst voor {symbol} ({side} {amount} contracten @ {limit_price})!")
+        print(f"   🚀 V20 SUCCES: Limit order geplaatst voor {symbol} ({side} {amount} contracten @ {limit_price}). Wacht op fill voor SL/TP.")
         
         if candle_ts > 0:
             symbol_last_traded_candles[symbol] = candle_ts
 
+        # Registreer als 'pending' zodat de beheerlus hem niet wist
         active_trades[symbol] = {
+            'status': 'pending',
+            'created_at': time.time(),
             'side': 'long' if is_long else 'short', 
-            'entry': limit_price, 'peak': limit_price, 'atr': atr,
-            'sl': stop_loss_val, 'tp': take_profit_val,
+            'entry': limit_price, 
+            'peak': limit_price, 
+            'atr': atr,
+            'sl': stop_loss_val, 
+            'tp': take_profit_val,
             'trailing_mult': boss_trailing_mult,
             'breakeven_secured': False,
         }
         push_trader_status_to_github()
     except Exception as e:
-        print(f"   ❌ Fout bij plaatsen zone-based limit order voor {symbol}: {e}")
+        print(f"   ❌ Fout bij plaatsen limit order voor {symbol}: {e}")
 
 
 if __name__ == '__main__':
-    pull_status_from_github()  # Status inladen bij opstart!
+    pull_status_from_github()
     threading.Thread(target=run_server, daemon=True).start()
     print("🚀 V20 Trader Worker gestart (scan interval: 60 seconden).")
     while True:
