@@ -419,15 +419,23 @@ def execute_live_trades_scan(symbols):
             active_symbols.add(p.get('symbol'))
 
     if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
+        print(f"ℹ️ TWM Sniper: Maximaal aantal actieve posities bereikt ({len(active_symbols)}/{MAX_CONCURRENT_POSITIONS}).")
         return
 
     for symbol in symbols:
+        # Als de munt niet bestaat, al een actieve positie heeft, of op cooldown staat -> OVERSLAAN (continue)
         if symbol not in exchange.markets or symbol in active_symbols or symbol in symbol_cooldowns:
-            try:
-                asset = symbol.split('/')[0].split(':')[0]
-                evaluate_and_trade_sniper(asset, symbol)
-            except Exception as e:
-                print(f"⚠️ TWM Sniper fout bij {symbol}: {e}")
+            continue
+            
+        if current_time - symbol_cooldowns.get(symbol, 0) < COOLDOWN_SECONDS:
+            continue
+
+        try:
+            asset = symbol.split('/')[0].split(':')[0]
+            print(f"🔎 TWM Sniper Evalueren van {symbol} (Asset: {asset})...")
+            evaluate_and_trade_sniper(asset, symbol)
+        except Exception as e:
+            print(f"⚠️ TWM Sniper fout bij {symbol}: {e}")
 
 
 def evaluate_and_trade_sniper(asset, symbol):
