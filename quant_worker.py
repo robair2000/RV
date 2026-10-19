@@ -146,8 +146,11 @@ def fetch_market_context_from_exchange(exch, symbol):
     return funding, orderbook_imbalance
 
 
+STATE_VERSION = 2  # Verhoog dit getal bij ingrijpende logica-updates om oude states automatisch te resetten
+
 def default_state():
     return {
+        'state_version': STATE_VERSION,
         'learning_rate': 0.03,
         'lookback_window': 350,
         'current_regime': 'trending',
@@ -179,17 +182,21 @@ def default_state():
         'updated_at': 0,
     }
 
-
 def load_or_init_state(state_file):
     state = default_state()
     if os.path.exists(state_file):
         try:
             with open(state_file, 'r', encoding='utf-8') as f:
                 loaded = json.load(f)
-            if isinstance(loaded, dict):
+            
+            # Controleer de versie: als de opgeslagen state verouderd is, negeer hem en forceer defaults!
+            if isinstance(loaded, dict) and loaded.get('state_version', 1) == STATE_VERSION:
                 state.update(loaded)
+            else:
+                print(f"🔄 Oude of incompatibele state gedetecteerd voor {state_file}. Reset naar v{STATE_VERSION} defaults.")
         except Exception:
             pass
+            
     if state.get('data_status') in (None, 'new'):
         state['last_trained_timestamp'] = 0
     return state
