@@ -206,7 +206,7 @@ def pull_latest_states_from_github(symbols):
         try:
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=15) as resp:
-                with open(filename + '.tmp', 'wb') as f:
+                with open(filename + '.tmp', 'wb' ) as f:
                     f.write(resp.read())
             os.replace(filename + '.tmp', filename)
         except Exception:
@@ -241,7 +241,9 @@ def close_position(symbol, side, contracts):
         try:
             open_orders = exchange.fetch_open_orders(symbol)
             for o in open_orders:
-                exchange.cancel_order(o['id'], symbol)
+                # Annuleer alleen eigen TWM orders bij sluiten
+                if 'twm_' in str(o.get('clientOrderId', '')):
+                    exchange.cancel_order(o['id'], symbol)
         except Exception:
             pass
 
@@ -260,29 +262,33 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
     try:
         close_side = 'sell' if side == 'long' else 'buy'
         
+        # Geef de order een unieke TWM clientOrderId mee om conflicten met andere bots te voorkomen
+        client_order_id = f"twm_sl_{int(time.time() * 1000)}"
         new_order = exchange.create_order(symbol, 'stop', close_side, contracts, None, {
             'stopPrice': new_sl,
-            'reduceOnly': True
+            'reduceOnly': True,
+            'clientOrderId': client_order_id
         })
         new_order_id = new_order.get('id') if new_order else None
 
+        if old_sl_order_id:
+            try:
+                exchange.cancel_order(old_sl_order_id, symbol)
+            except Exception:
+                pass
+
+        # Veiligheidsfilter: scan open orders, maar ruim uitsluitend eigen TWM stop-loss orders op
         open_orders = exchange.fetch_open_orders(symbol)
         for o in open_orders:
             order_id = o.get('id')
-            order_type = str(o.get('type', '')).lower()
+            c_id = str(o.get('clientOrderId', ''))
             info_str = str(o.get('info', {})).lower()
             
-            if old_sl_order_id and order_id == old_sl_order_id:
-                try:
-                    exchange.cancel_order(order_id, symbol)
-                except Exception:
-                    pass
+            # BLIJF ABSOLUUT AF van Take Profit orders en orders van andere bots
+            if 'take profit' in info_str or 'tp' in info_str:
                 continue
             
-            if order_id != new_order_id and ('stop' in order_type or 'stop' in info_str):
-                if 'take profit' in info_str or 'tp' in info_str:
-                    continue
-                
+            if order_id != new_order_id and 'twm_' in c_id:
                 try:
                     exchange.cancel_order(order_id, symbol)
                 except Exception:
@@ -323,7 +329,6 @@ def manage_open_positions_and_trailing_stops(symbols):
         if trade is None:
             trail_mult = TRAILING_SL_MULT
             
-            # Dynamische ATR ophalen via opgeslagen state of veilige fallback van 2%
             asset = symbol.split('/')[0].split(':')[0]
             pst = load_pattern_state(asset)
             atr_pct = float(pst.get('atr_pct', 2.0)) if pst else 2.0
@@ -460,6 +465,15 @@ def execute_live_trades_scan(symbols):
         if current_time - symbol_cooldowns.get(symbol, 0) < COOLDOWN_SECONDS:
             continue
 
+        # KRITISCHE FIX: Controleer of er al openstaande orders (pending) openstaan op dit symbool (voorkomt dubbele exposure en bot-conflicten)
+        try:
+            pending_orders = exchange.fetch_open_orders(symbol)
+            if pending_orders:
+                print(f"   🛡️ TWM Sniper SKIPPEN {symbol}: Er staan al openstaande orders/limieten op dit symbool (mogelijke andere bot).")
+                continue
+        except Exception:
+            pass
+
         try:
             asset = symbol.split('/')[0].split(':')[0]
             print(f"🔎 TWM Sniper Evalueren van {symbol} (Asset: {asset})...")
@@ -480,7 +494,6 @@ def evaluate_and_trade_sniper(asset, symbol):
     vol_expansion = float(pattern_st.get('volume_expansion_ratio', 1.0))
     is_squeeze = bool(pattern_st.get('is_bollinger_squeeze', False))
     
-    # Haal de werkelijke dynamische ATR-percentage op uit de agent status!
     atr_pct = float(pattern_st.get('atr_pct', 2.0))
 
     print(f"   🎯 TWM Sniper Check {symbol}: Signal={boss_signal.upper()} | Score={boss_score} | VolRatio={vol_expansion} | Squeeze={is_squeeze} | ATR%={atr_pct}")
@@ -497,7 +510,6 @@ def evaluate_and_trade_sniper(asset, symbol):
     except Exception:
         return
 
-    # Dynamische ATR berekening op basis van echte marktomstandigheden
     atr = price * (atr_pct / 100.0)
     
     is_long = (boss_signal == 'long')
@@ -521,6 +533,7 @@ def evaluate_and_trade_sniper(asset, symbol):
         'stopLoss': {'triggerPrice': stop_loss_val},
         'takeProfit': {'triggerPrice': take_profit_val},
         'marginMode': DESIRED_MARGIN_MODE,
+        'clientOrderId': f"twm_entry_{int(time.time() * 1000)}"
     }
     try:
         order = execute_with_retry(lambda: exchange.create_order(symbol, 'market', side, amount, None, params))
