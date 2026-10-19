@@ -351,8 +351,11 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
 
     leverage = 3 if score >= 88.0 else (2 if score >= 78.0 else 1)
     trailing_mult = 2.5
-    last_candle_timestamp = int(df_4h['timestamp'].iloc[-1]) if not df_4h.empty else 0
-
+    
+    # --- FIX: Converteer CCXT milliseconden naar seconden ---
+    raw_ts = float(df_4h['timestamp'].iloc[-1]) if not df_4h.empty else 0.0
+    last_candle_timestamp = int(raw_ts / 1000.0 if raw_ts > 1e10 else raw_ts)
+    
     return {
         'pattern_score': float(score),
         'pattern_signal': signal,
