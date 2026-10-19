@@ -374,10 +374,12 @@ def manage_open_positions_and_trailing_stops(symbols):
         if trade['sl'] != old_sl:
             update_exchange_stop_loss(symbol, side, contracts, trade['sl'])
             
-        if stop_hit or tp_hit:
+       if stop_hit or tp_hit:
             if close_position(symbol, side, contracts):
-                if ((price - entry) / entry if side == 'long' else (entry - price) / entry) < 0:
-                    symbol_cooldowns[symbol] = time.time()
+                # ZET ALTIJD EEN COOLDOWN NA EEN GESLOTEN TRADE (Zowel winst als verlies!)
+                # Dit voorkomt instant re-entry op dezelfde stale 4h candle/signaal.
+                symbol_cooldowns[symbol] = time.time()
+                
                 active_trades.pop(symbol, None)
                 state_changed = True
 
