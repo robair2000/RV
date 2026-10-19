@@ -117,7 +117,9 @@ def compute_smart_indicators(df):
     atr_pct = (atr / close) * 100.0
 
     plus_dm = high.diff()
-    minus_dm = low.diff()
+    minus_dm = -low.diff()  # Correcte teken (min van low diff)
+    
+    # Correcte Directional Movement filtering
     plus_dm = np.where((plus_dm > minus_dm) & (plus_dm > 0), plus_dm, 0.0)
     minus_dm = np.where((minus_dm > plus_dm) & (minus_dm > 0), minus_dm, 0.0)
     
