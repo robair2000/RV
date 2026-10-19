@@ -89,25 +89,24 @@ def get_combined_trading_assets(top_n=5):
 TIMEFRAMES = {'4h': '4h', '1d': '1d'}
 CHECK_INTERVAL_SECONDS = 1800
 
-# GEBRUIK NU STRICT KUCOIN FUTURES VOOR SWAP SYMBOLEN
 exchange = ccxt.kucoinfutures({'enableRateLimit': True})
 
 
 def fetch_historical_candles(symbol, timeframe, limit=250):
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        if not ohlcv or len(ohlcv) < 2:
+        if not ohlcv or len(ohlcv) < 5:
             return pd.DataFrame()
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
-        # KRITISCHE FIX: Verwijder altijd de huidige, incomplete (lopende) candle om repainting 
-        # en vertekende volume-expansie ratio's te voorkomen! (Net zoals in quant_worker)
+        # KRITISCHE FIX: Verwijder altijd de huidige, incomplete (lopende) candle om repainting te voorkomen
         df = df.iloc[:-1].reset_index(drop=True)
         
         return df
     except Exception as e:
         print(f"⚠️ Fout bij ophalen candles voor {symbol} ({timeframe}): {e}")
         return pd.DataFrame()
+
 
 def compute_smart_indicators(df):
     close = df['close']
@@ -121,9 +120,8 @@ def compute_smart_indicators(df):
     atr_pct = (atr / close) * 100.0
 
     plus_dm = high.diff()
-    minus_dm = -low.diff()  # Correcte teken (min van low diff)
+    minus_dm = -low.diff()
     
-    # Correcte Directional Movement filtering
     plus_dm = np.where((plus_dm > minus_dm) & (plus_dm > 0), plus_dm, 0.0)
     minus_dm = np.where((minus_dm > plus_dm) & (minus_dm > 0), minus_dm, 0.0)
     
@@ -139,20 +137,19 @@ def compute_smart_indicators(df):
     signal_line = macd.ewm(span=9, adjust=False).mean()
     macd_hist = macd - signal_line
 
-    # Bollinger Bands & Squeeze Berekening
     sma20 = close.rolling(20).mean()
     std20 = close.rolling(20).std()
     upper_bb = sma20 + (std20 * 2.0)
     lower_bb = sma20 - (std20 * 2.0)
     bb_width = (upper_bb - lower_bb) / (sma20 + 1e-8)
-    # Bepaal de laagste bandbreedte van de afgelopen 20 bars EXCLUSIEF de huidige bar
+    
+    # KRITISCHE FIX: Squeeze berekening EXCLUSIEF de huidige bar om valse triggers te voorkomen
     prior_min_bb_width = bb_width.iloc[-21:-1].min()
     is_bb_squeeze = bool(bb_width.iloc[-1] <= prior_min_bb_width * 1.1)
 
     pct_b = (close - lower_bb) / ((upper_bb - lower_bb) + 1e-8)
     ema9 = close.ewm(span=9, adjust=False).mean()
 
-    # Volume Expansie Ratio Berekening
     vol_sma = volume.rolling(20).mean()
     current_vol = volume.iloc[-1]
     avg_vol = vol_sma.iloc[-1] if not math.isnan(vol_sma.iloc[-1]) and vol_sma.iloc[-1] > 0 else 1.0
@@ -219,37 +216,36 @@ def detect_support_resistance_and_sd(df):
 
 def train_meta_classifier(df, direction='long'):
     df = df.copy()
+    
+    # KRITISCHE FIX: Snijd de laatste 3 rijen af i.v.m. shift(-3) om NaN targets te voorkomen
     df['returns'] = df['close'].pct_change(3).shift(-3)
     
-    # Symmetrische target
     if direction == 'long':
         df['target'] = (df['returns'] > 0.005).astype(int)
     else:
         df['target'] = (df['returns'] < -0.005).astype(int)
     
-    # STATIONAIRE FEATURES (vervangen absolute prijzen door ratios en percentages)
     sma20 = df['close'].rolling(20).mean()
     atr = (df['high'] - df['low']).rolling(14).mean()
     
-    df['feat_sma_dist'] = (df['close'] - sma20) / (sma20 + 1e-8)  # Prijs afstand tot SMA20 in %
-    df['feat_atr_pct'] = (atr / df['close']) * 100.0             # ATR als % van de koers
-    df['feat_vol_ratio'] = df['volume'] / (df['volume'].rolling(20).mean() + 1e-8) # Volume expansie ratio
+    df['feat_sma_dist'] = (df['close'] - sma20) / (sma20 + 1e-8)
+    df['feat_atr_pct'] = (atr / df['close']) * 100.0
+    df['feat_vol_ratio'] = df['volume'] / (df['volume'].rolling(20).mean() + 1e-8)
     
     feats = ['feat_sma_dist', 'feat_atr_pct', 'feat_vol_ratio']
-    df_clean = df.dropna(subset=feats + ['target'])
+    df_clean = df.dropna(subset=feats + ['target']).iloc[:-3].reset_index(drop=True)
     
-    if len(df_clean) < 60:
+    if len(df_clean) < 40:
         return 0.5
     
     X = df_clean[feats]
     y = df_clean['target']
     
-    # Tijd-gebaseerde split voor echte validatie (laatste 25% als validatieset)
     split_idx = int(len(X) * 0.75)
     X_tr, X_va = X.iloc[:split_idx], X.iloc[split_idx:]
     y_tr, y_va = y.iloc[:split_idx], y.iloc[split_idx:]
     
-    if len(X_tr) < 30 or len(X_va) < 10:
+    if len(X_tr) < 20 or len(X_va) < 5:
         return 0.5
         
     model = xgb.XGBClassifier(
@@ -262,11 +258,9 @@ def train_meta_classifier(df, direction='long'):
         verbosity=0
     )
     
-    # Train met early stopping op de validatieset om overfitting tegen te gaan
     eval_set = [(X_va, y_va)]
     model.fit(X_tr, y_tr, eval_set=eval_set, verbose=False)
     
-    # Voorspel op de meest recente bar
     latest_feat = pd.DataFrame([{
         'feat_sma_dist': float((df['close'].iloc[-1] - sma20.iloc[-1]) / (sma20.iloc[-1] + 1e-8)),
         'feat_atr_pct': float((atr.iloc[-1] / df['close'].iloc[-1]) * 100.0),
@@ -280,6 +274,7 @@ def train_meta_classifier(df, direction='long'):
         
     return prob
 
+
 def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
     if df_4h is None or len(df_4h) < 60 or df_1d is None or len(df_1d) < 60:
         return {
@@ -288,7 +283,7 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
             'recommended_leverage': 1, 
             'recommended_trailing_mult': 2.5, 
             'min_score_required': MIN_BOSS_SCORE,
-            'strictness_mode': 'explosive_reversal_hunter',
+            'strictness_mode': 'trend_continuation_pullback',
             'confidence': 0.0
         }
 
@@ -328,14 +323,14 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
         score = 85.0
 
     if signal != 'none':
-        meta_prob = train_meta_classifier(df_4h)
-        effective_prob = meta_prob if signal == 'long' else (1.0 - meta_prob)
-        score += (effective_prob * 15.0)
+        # Symmetrische onafhankelijke meta-classifier evaluatie
+        meta_prob = train_meta_classifier(df_4h, direction=signal)
+        score += (meta_prob * 15.0)
         
         threshold_map = {'BTC': 0.46, 'ETH': 0.46, 'LINK': 0.40, 'SOL': 0.40, 'AVAX': 0.40}
         min_prob = threshold_map.get(asset.upper(), 0.40)
 
-        if effective_prob < min_prob:
+        if meta_prob < min_prob:
             signal = 'none'
             score = 50.0
 
@@ -348,7 +343,7 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
         'recommended_leverage': int(leverage),
         'recommended_trailing_mult': float(trailing_mult),
         'min_score_required': MIN_BOSS_SCORE,
-        'strictness_mode': 'explosive_reversal_hunter',
+        'strictness_mode': 'trend_continuation_pullback',
         'atr_pct': round(ind_4h['atr_pct'], 2),
         'adx_4h': round(ind_4h['adx'], 2),
         'volume_expansion_ratio': ind_4h['volume_expansion_ratio'],
@@ -409,7 +404,7 @@ def push_state_to_github(filename, data):
         pass
 
 def run_final_boss_scan():
-    print("--- [V20 S&R & S&D Agent] Start marktscan ---")
+    print("--- [Trend-Pullback Agent] Start marktscan ---")
     pull_ranking_from_github()
     symbols = get_combined_trading_assets(top_n=5)
 
@@ -428,17 +423,17 @@ def run_final_boss_scan():
             analysis = analyze_advanced_patterns(df_4h, df_1d, asset=asset)
             pattern_filename = f'pattern_state_{asset.lower()}_4h.json'
             push_state_to_github(pattern_filename, analysis)
-            print(f"👑 {asset} V20 Agent: Signaal={analysis['pattern_signal'].upper()} | VolRatio={analysis['volume_expansion_ratio']} | Squeeze={analysis['is_bollinger_squeeze']}")
+            print(f"👑 {asset} Agent: Signaal={analysis['pattern_signal'].upper()} | VolRatio={analysis['volume_expansion_ratio']} | Squeeze={analysis['is_bollinger_squeeze']}")
         time.sleep(5.0)
 
 
 if __name__ == '__main__':
     threading.Thread(target=run_server, daemon=True).start()
-    print("🚀 V20 S&R & Supply/Demand Agent gestart.")
+    print("🚀 Trend-Pullback Agent gestart.")
 
     while True:
         try:
             run_final_boss_scan()
         except Exception as e:
-            print(f"Fout in V20 scan lus: {e}")
+            print(f"Fout in scan lus: {e}")
         time.sleep(CHECK_INTERVAL_SECONDS)
