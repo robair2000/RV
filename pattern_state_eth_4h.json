@@ -5,10 +5,10 @@
   "recommended_trailing_mult": 2.5,
   "min_score_required": 75.0,
   "strictness_mode": "explosive_reversal_hunter",
-  "atr_pct": 0.76,
-  "adx_4h": 46.56,
-  "volume_expansion_ratio": 0.19,
+  "atr_pct": 0.88,
+  "adx_4h": 54.34,
+  "volume_expansion_ratio": 0.34,
   "is_volume_expansion": false,
   "is_bollinger_squeeze": true,
-  "updated_at": 1792397246.8622236
+  "updated_at": 1792398799.8686087
 }
