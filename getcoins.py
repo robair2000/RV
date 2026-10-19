@@ -1,4 +1,5 @@
 import os
+import re
 import ccxt
 import pandas as pd
 import numpy as np
@@ -30,7 +31,10 @@ def fetch_top_performing_coins():
     valid_symbols = []
     for symbol, market in EXCHANGE.markets.items():
         if market.get('linear', False) and market.get('active', True) and symbol.endswith(':USDT'):
-            if '/' in symbol and 'DOWN' not in symbol and 'UP' not in symbol:
+            # Alleen echte leveraged tokens (BTC3L/BTC3S) uitsluiten; 'UP'/'DOWN' als substring sloot
+            # legitieme coins uit (SUPER, SYRUP, ...).
+            base = symbol.split('/')[0]
+            if '/' in symbol and not re.search(r'\d+[LS]$', base):
                 valid_symbols.append(symbol)
 
     valid_symbols = list(set(valid_symbols))
@@ -85,8 +89,13 @@ def fetch_top_performing_coins():
             atr = tr.rolling(14).mean()
             atr_pct = (atr / close).mean() * 100.0
             
-            sma20 = close.rolling(20).mean()
-            trend_strength = ((close - sma20) / sma20).abs().mean() * 100
+            # Trendsterkte = Kaufman efficiency ratio over de laatste 30 candles (0..1): netto verplaatsing
+            # gedeeld door het afgelegde pad. Hoog = nette trend, laag = ruis/zijwaarts. (De oude maat,
+            # afstand tot de SMA20, beloonde gewoon volatiliteit.) Geschaald x10 om de score-weging te behouden.
+            window = close.tail(31)
+            path = window.diff().abs().sum()
+            efficiency = (abs(window.iloc[-1] - window.iloc[0]) / path) if path > 0 else 0.0
+            trend_strength = float(efficiency) * 10.0
             
             bh_return = (close.iloc[-1] / close.iloc[0] - 1) * 100
 
