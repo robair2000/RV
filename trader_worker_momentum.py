@@ -69,6 +69,28 @@ def pull_ranking_from_github():
         pass
 
 
+def pull_latest_states_from_github(symbols):
+    token = os.environ.get('GITHUB_TOKEN', '')
+    files_to_pull = []
+    for symbol in symbols:
+        asset = symbol.split('/')[0].split(':')[0]
+        files_to_pull.append(f'pattern_state_{asset.lower()}_4h.json')
+
+    for filename in set(files_to_pull):
+        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
+        headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'twm-sniper-worker'}
+        if token:
+            headers['Authorization'] = f'Bearer {token}'
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                with open(filename + '.tmp', 'wb') as f:
+                    f.write(resp.read())
+            os.replace(filename + '.tmp', filename)
+        except Exception:
+            pass
+
+
 def get_combined_trading_assets(top_n=5):
     core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'LINK/USDT:USDT', 'AVAX/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
@@ -95,7 +117,6 @@ COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 3600))
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 
-# Dynamisch instelbaar via Render Environment Variables (standaard 5)
 MAX_CONCURRENT_POSITIONS = int(os.environ.get('MAX_CONCURRENT_POSITIONS', 5))
 TP_ATR_mult_BASE = 5.0  
 TRAILING_SL_MULT = 2.0  
@@ -125,11 +146,52 @@ def execute_with_retry(func, retries=3, delay=2):
 
 
 def push_trader_status_to_github():
-    data = {'updated_at': time.time(), 'active_trades': active_trades, 'cooldowns': symbol_cooldowns}
+    data = {
+        'updated_at': time.time(),
+        'active_trades': active_trades,
+        'cooldowns': symbol_cooldowns
+    }
     filename = 'trader_status_momentum.json'
     content_bytes = json.dumps(data, indent=2).encode('utf-8')
+
     with open(filename, 'wb') as f:
         f.write(content_bytes)
+
+    token = os.environ.get('GITHUB_TOKEN')
+    if not token:
+        return
+
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "twm-sniper-worker"
+    }
+
+    sha = None
+    try:
+        req = urllib.request.Request(url + f"?ref={GITHUB_BRANCH}", headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            sha = json.loads(resp.read().decode('utf-8')).get('sha')
+    except Exception:
+        pass
+
+    payload = {
+        "message": "Auto-update trader_status_momentum.json [skip ci]",
+        "content": base64.b64encode(content_bytes).decode('ascii'),
+        "branch": GITHUB_BRANCH
+    }
+    if sha:
+        payload["sha"] = sha
+
+    try:
+        req_data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(url, data=req_data, headers=headers, method='PUT')
+        with urllib.request.urlopen(req, timeout=15):
+            pass
+    except Exception:
+        pass
 
 
 def load_pattern_state(asset):
@@ -273,6 +335,13 @@ def manage_open_positions_and_trailing_stops(symbols):
                 active_trades.pop(symbol, None)
                 state_changed = True
 
+    # KRITISCHE FIX: Prune actieve trades die niet meer op de exchange bestaan
+    to_remove = [sym for sym in active_trades if sym not in open_symbols]
+    if to_remove:
+        for sym in to_remove:
+            active_trades.pop(sym, None)
+        state_changed = True
+
     if state_changed:
         push_trader_status_to_github()
 
@@ -305,6 +374,16 @@ def compute_contract_amount(symbol, price, leverage):
 def execute_live_trades_scan(symbols):
     current_time = time.time()
     
+    # KRITISCHE FIX: Opschonen van verlopen cooldowns
+    expired_cooldowns = [sym for sym, ts in symbol_cooldowns.items() if current_time - ts > COOLDOWN_SECONDS]
+    for sym in expired_cooldowns:
+        symbol_cooldowns.pop(sym, None)
+    if expired_cooldowns:
+        push_trader_status_to_github()
+
+    # KRITISCHE FIX: Ophalen van verse states via GitHub
+    pull_latest_states_from_github(symbols)
+
     try:
         positions = execute_with_retry(lambda: exchange.fetch_positions())
     except Exception:
