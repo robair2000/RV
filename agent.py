@@ -215,33 +215,56 @@ def train_meta_classifier(df, direction='long'):
     df = df.copy()
     df['returns'] = df['close'].pct_change(3).shift(-3)
     
-    # Symmetrische target: voor longs kijken we naar > +0.5%, voor shorts naar < -0.5%
+    # Symmetrische target
     if direction == 'long':
         df['target'] = (df['returns'] > 0.005).astype(int)
     else:
         df['target'] = (df['returns'] < -0.005).astype(int)
     
-    df['sma20'] = df['close'].rolling(20).mean()
-    df['atr'] = (df['high'] - df['low']).rolling(14).mean()
-    df['adx_proxy'] = (df['close'] - df['sma20']).abs() / (df['atr'] + 1e-8)
+    # STATIONAIRE FEATURES (vervangen absolute prijzen door ratios en percentages)
+    sma20 = df['close'].rolling(20).mean()
+    atr = (df['high'] - df['low']).rolling(14).mean()
     
-    feats = ['sma20', 'atr', 'adx_proxy', 'volume']
+    df['feat_sma_dist'] = (df['close'] - sma20) / (sma20 + 1e-8)  # Prijs afstand tot SMA20 in %
+    df['feat_atr_pct'] = (atr / df['close']) * 100.0             # ATR als % van de koers
+    df['feat_vol_ratio'] = df['volume'] / (df['volume'].rolling(20).mean() + 1e-8) # Volume expansie ratio
+    
+    feats = ['feat_sma_dist', 'feat_atr_pct', 'feat_vol_ratio']
     df_clean = df.dropna(subset=feats + ['target'])
     
-    if len(df_clean) < 40:
+    if len(df_clean) < 60:
         return 0.5
     
     X = df_clean[feats]
     y = df_clean['target']
     
-    model = xgb.XGBClassifier(n_estimators=30, max_depth=3, learning_rate=0.05, random_state=42, verbosity=0)
-    model.fit(X, y)
+    # Tijd-gebaseerde split voor echte validatie (laatste 25% als validatieset)
+    split_idx = int(len(X) * 0.75)
+    X_tr, X_va = X.iloc[:split_idx], X.iloc[split_idx:]
+    y_tr, y_va = y.iloc[:split_idx], y.iloc[split_idx:]
     
+    if len(X_tr) < 30 or len(X_va) < 10:
+        return 0.5
+        
+    model = xgb.XGBClassifier(
+        n_estimators=40, 
+        max_depth=3, 
+        learning_rate=0.03, 
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42, 
+        verbosity=0
+    )
+    
+    # Train met early stopping op de validatieset om overfitting tegen te gaan
+    eval_set = [(X_va, y_va)]
+    model.fit(X_tr, y_tr, eval_set=eval_set, verbose=False)
+    
+    # Voorspel op de meest recente bar
     latest_feat = pd.DataFrame([{
-        'sma20': df['sma20'].iloc[-1],
-        'atr': df['atr'].iloc[-1],
-        'adx_proxy': df['adx_proxy'].iloc[-1],
-        'volume': df['volume'].iloc[-1]
+        'feat_sma_dist': float((df['close'].iloc[-1] - sma20.iloc[-1]) / (sma20.iloc[-1] + 1e-8)),
+        'feat_atr_pct': float((atr.iloc[-1] / df['close'].iloc[-1]) * 100.0),
+        'feat_vol_ratio': float(df['volume'].iloc[-1] / (df['volume'].rolling(20).mean().iloc[-1] + 1e-8))
     }])
     
     try:
