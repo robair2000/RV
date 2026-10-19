@@ -121,6 +121,7 @@ MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 
 active_trades = {}
 symbol_cooldowns = {}
+symbol_last_traded_candles = {}  # Geheugen om re-entry op dezelfde 4h candle te blokkeren
 
 # GEBRUIK STRICT KUCOIN FUTURES VOOR CORRECTE SWAP ENDPOINTS
 exchange = ccxt.kucoinfutures({
@@ -261,7 +262,7 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
         return None
     try:
         close_side = 'sell' if side == 'long' else 'buy'
-        client_order_id = f"v20_sl_{int(time.time() * 1000)}" # (of twm_sl_ voor de momentum sniper)
+        client_order_id = f"twm_sl_{int(time.time() * 1000)}"  # Correcte TWM prefix
         
         # 1. Plaats direct de nieuwe Stop Loss order op de exchange
         new_order = exchange.create_order(symbol, 'stop', close_side, contracts, None, {
@@ -271,14 +272,13 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
         })
         new_order_id = new_order.get('id') if new_order else None
 
-        # 2. Haal actieve open orders op om oude eigen SL orders netjes op te ruimen
+        # 2. Haal actieve open orders op om oude eigen TWM SL orders netjes op te ruimen
         open_orders = exchange.fetch_open_orders(symbol)
         for o in open_orders:
             order_id = o.get('id')
             c_id = str(o.get('clientOrderId', ''))
             o_type = str(o.get('type', '')).lower()
             
-            # Als we een specifiek oud ID hebben, annuleer die direct
             if old_sl_order_id and order_id == old_sl_order_id:
                 try:
                     exchange.cancel_order(order_id, symbol)
@@ -286,12 +286,11 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
                     pass
                 continue
             
-            # Anders: ruim alleen onze eigen oude stop orders op (herkenbaar aan clientOrderId prefix of type 'stop')
-            # BLIJF ALTIJD AF van take profit orders ('limit' of 'take profit')
-            if order_id != new_order_id and ('v20_sl_' in c_id or 'twm_sl_' in c_id or o_type == 'stop'):
-                # Extra check: als het expliciet een take-profit of limit order is, sla hem over
-                if 'take' in o_type or 'tp' in c_id or o_type == 'limit':
-                    continue
+            # BLIJF AF van take profit orders en orders van andere bots
+            if 'take' in o_type or 'tp' in c_id or o_type == 'limit':
+                continue
+            
+            if order_id != new_order_id and ('twm_sl_' in c_id or o_type == 'stop'):
                 try:
                     exchange.cancel_order(order_id, symbol)
                 except Exception:
@@ -299,7 +298,7 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
                     
         return new_order_id
     except Exception as e:
-        print(f"⚠️ Kon exchange stop-loss niet bijwerken voor {symbol}: {e}")
+        print(f"⚠️ Kon TWM exchange stop-loss niet bijwerken voor {symbol}: {e}")
         return old_sl_order_id
 
 
@@ -468,11 +467,10 @@ def execute_live_trades_scan(symbols):
         if current_time - symbol_cooldowns.get(symbol, 0) < COOLDOWN_SECONDS:
             continue
 
-        # KRITISCHE FIX: Controleer of er al openstaande orders (pending) openstaan op dit symbool (voorkomt dubbele exposure en bot-conflicten)
         try:
             pending_orders = exchange.fetch_open_orders(symbol)
             if pending_orders:
-                print(f"   🛡️ TWM Sniper SKIPPEN {symbol}: Er staan al openstaande orders/limieten op dit symbool (mogelijke andere bot).")
+                print(f"   🛡️ TWM Sniper SKIPPEN {symbol}: Er staan al openstaande orders/limieten op dit symbool.")
                 continue
         except Exception:
             pass
@@ -489,6 +487,14 @@ def evaluate_and_trade_sniper(asset, symbol):
     pattern_st = load_pattern_state(asset)
     if pattern_st is None:
         return
+
+    # --- CANDLE TIMESTAMP LOCK CHECK (VOORKOMT STALE RE-ENTRIES) ---
+    candle_ts = int(pattern_st.get('last_candle_ts', 0))
+    last_traded_ts = symbol_last_traded_candles.get(symbol, 0)
+    if candle_ts > 0 and candle_ts <= last_traded_ts:
+        print(f"   ⏳ {symbol}: Re-entry geblokkeerd. Dezelfde 4h candle ({candle_ts}) is reeds verhandeld.")
+        return
+    # -------------------------------------------------------------
 
     boss_signal = pattern_st.get('pattern_signal', 'none')
     boss_score = pattern_st.get('pattern_score', 50.0)
@@ -541,6 +547,11 @@ def evaluate_and_trade_sniper(asset, symbol):
     try:
         order = execute_with_retry(lambda: exchange.create_order(symbol, 'market', side, amount, None, params))
         print(f"   🚀 TWM SNIPER RAAK: Order geplaatst voor {symbol} ({side} {amount} contracten @ {price})!")
+        
+        # Sla op dat deze 4h candle nu officieel verhandeld is
+        if candle_ts > 0:
+            symbol_last_traded_candles[symbol] = candle_ts
+
         active_trades[symbol] = {
             'side': 'long' if is_long else 'short', 
             'entry': price, 'peak': price, 'atr': atr,
