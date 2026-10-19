@@ -320,7 +320,22 @@ with tab3:
         twm_active = twm_status.get('active_trades', {})
         if twm_active:
             st.success(f"🚀 **Actieve TWM Reversal Sniper Posities:** {len(twm_active)}")
-            st.json(twm_active)
+            
+            # Converteer de active_trades dictionary naar een mooie overzichtstabel met SL en TP
+            sniper_rows = []
+            for sym, details in twm_active.items():
+                sniper_rows.append({
+                    'Symbool': sym,
+                    'Richting': str(details.get('side', '')).upper(),
+                    'Entry Prijs ($)': round(float(details.get('entry', 0)), 4),
+                    'Stop Loss (SL) ($)': round(float(details.get('sl', 0)), 4),
+                    'Take Profit (TP) ($)': round(float(details.get('tp', 0)), 4),
+                    'Peak Prijs ($)': round(float(details.get('peak', 0)), 4),
+                    'Breakeven Beveiligd': 'Ja' if details.get('breakeven_secured', False) else 'Nee'
+                })
+            
+            df_sniper = pd.DataFrame(sniper_rows)
+            st.dataframe(df_sniper, width="stretch")
         else:
             st.info("ℹ️ Geen actieve TWM sniper posities op dit moment. De bot scant actief op volume-uitbraken en S&R squeezes.")
         
