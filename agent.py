@@ -16,7 +16,7 @@ import xgboost as xgb
 from sklearn.metrics import roc_auc_score
 
 from github_utils import github_pull, github_put
-from market_utils import TF_MS, fetch_ohlcv_paginated, fetch_cached_1d_shared
+from market_utils import TF_MS, fetch_ohlcv_paginated, fetch_cached_1d_shared, fetch_cached_4h_shared
 
 
 # --- RENDER WEB SERVER ---
@@ -51,24 +51,22 @@ def pull_ranking_from_github():
 # --- CONFIG (alles overschrijfbaar via env) ---
 MIN_ADX_TREND = float(os.environ.get('MIN_ADX_TREND', 18.0))
 MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 78.0))
-ZONE_MAX_AGE_BARS = int(os.environ.get('ZONE_MAX_AGE_BARS', 60))  # supply/demand-zone verloopt na 60 4h-candles (10 dagen)
+ZONE_MAX_AGE_BARS = int(os.environ.get('ZONE_MAX_AGE_BARS', 60))
 
-# Trader-parameters (moeten gelijk blijven aan trader_worker.py; worden ook naar de state geschreven)
 TRAIL_SL_ATR = 2.5
 MIN_RRR = 3.0
 TP_ATR_BASE = 5.0
-EFFECTIVE_TP_ATR = max(TP_ATR_BASE, TRAIL_SL_ATR * (MIN_RRR + 0.2))  # = 8.0
+EFFECTIVE_TP_ATR = max(TP_ATR_BASE, TRAIL_SL_ATR * (MIN_RRR + 0.2))
 
-# Meta-labeling (triple barrier, gelijk aan het echte trade-profiel van de V20 trader)
 META_SL_ATR = float(os.environ.get('META_SL_ATR', TRAIL_SL_ATR))
 META_TP_ATR = float(os.environ.get('META_TP_ATR', EFFECTIVE_TP_ATR))
-META_HORIZON_BARS = int(os.environ.get('META_HORIZON_BARS', 30))      # 30 x 4h = 5 dagen max
-META_COST_PCT = float(os.environ.get('META_COST_PCT', 0.0012))        # round-trip fees + slippage (fractie)
-META_MARGIN = float(os.environ.get('META_MARGIN', 0.05))              # marge boven break-even kans
+META_HORIZON_BARS = int(os.environ.get('META_HORIZON_BARS', 30))
+META_COST_PCT = float(os.environ.get('META_COST_PCT', 0.0012))
+META_MARGIN = float(os.environ.get('META_MARGIN', 0.05))
 META_MIN_EVENTS = int(os.environ.get('META_MIN_EVENTS', 150))
 META_MIN_POS = int(os.environ.get('META_MIN_POS', 20))
-META_MIN_Z = float(os.environ.get('META_MIN_Z', 1.28))                # one-sided ~90%
-META_SE_INFLATION = float(os.environ.get('META_SE_INFLATION', 1.3))   # gecorreleerde assets/events
+META_MIN_Z = float(os.environ.get('META_MIN_Z', 1.28))
+META_SE_INFLATION = float(os.environ.get('META_SE_INFLATION', 1.3))
 META_REQUIRE_OOS_EV = os.environ.get('META_REQUIRE_OOS_EV', 'true').lower() in ('1', 'true', 'yes')
 META_MIN_SELECTED = int(os.environ.get('META_MIN_SELECTED', 15))
 META_DECLUSTER_BARS = int(os.environ.get('META_DECLUSTER_BARS', 6))
@@ -113,7 +111,6 @@ exchange = ccxt.kucoinfutures({'enableRateLimit': True})
 
 def fetch_historical_candles(symbol, timeframe, limit=250):
     try:
-        # Gebruik fetch_ohlcv_paginated zodat we gegarandeerd de meest recente candles tot nu ophalen
         df = fetch_ohlcv_paginated(exchange, symbol, timeframe, total_bars=limit)
         if df.empty or len(df) < 5:
             return pd.DataFrame()
@@ -124,7 +121,7 @@ def fetch_historical_candles(symbol, timeframe, limit=250):
 
 
 # ---------------------------------------------------------------------------
-# INDICATOREN (volledig vectorized: dezelfde code voor live en voor historie)
+# INDICATOREN
 # ---------------------------------------------------------------------------
 def _wilder(s, n=14):
     return s.ewm(alpha=1.0 / n, adjust=False, min_periods=n).mean()
@@ -141,7 +138,6 @@ def compute_indicator_frame(df):
     atr = tr.rolling(14).mean()
     atr_pct = (atr / close) * 100.0
 
-    # ADX met Wilder-smoothing en correct berekende +DM/-DM
     up = high.diff()
     down = -low.diff()
     plus_dm = up.where((up > down) & (up > 0), 0.0)
@@ -182,33 +178,7 @@ def compute_indicator_frame(df):
     }, index=df.index)
 
 
-def compute_smart_indicators(df):
-    """Laatste rij als dict (compat-wrapper)."""
-    f = compute_indicator_frame(df)
-    last = f.iloc[-1]
-    price = float(last['close'])
-
-    def num(x, default):
-        return float(x) if pd.notna(x) else default
-
-    return {
-        'close': price,
-        'ema9': float(last['ema9']),
-        'atr': num(last['atr'], price * 0.02),
-        'atr_pct': num(last['atr_pct'], 2.0),
-        'adx': num(last['adx'], 0.0),
-        'macd_hist': float(last['macd_hist']),
-        'pct_b': float(last['pct_b']),
-        'rsi': num(last['rsi'], 50.0),
-        'volume_expansion_ratio': round(float(last['vol_ratio']), 2),
-        'is_volume_expansion': bool(last['vol_ratio'] > 1.35),
-        'is_bollinger_squeeze': bool(last['bb_squeeze']),
-    }
-
-
 def sr_sd_series(df):
-    """Causale S/R + supply/demand per bar. Pivot i is pas bevestigd op bar i+5 (geen lookahead).
-    Zones verlopen na ZONE_MAX_AGE_BARS bars."""
     highs = df['high'].values
     lows = df['low'].values
     closes = df['close'].values
@@ -250,19 +220,7 @@ def sr_sd_series(df):
     return {'support': support, 'resistance': resistance, 'in_demand': in_dem, 'in_supply': in_sup}
 
 
-def detect_support_resistance_and_sd(df):
-    """Laatste waarden (compat-wrapper)."""
-    s = sr_sd_series(df)
-    return {
-        'nearest_support': float(s['support'][-1]),
-        'nearest_resistance': float(s['resistance'][-1]),
-        'in_demand_zone': bool(s['in_demand'][-1]),
-        'in_supply_zone': bool(s['in_supply'][-1]),
-    }
-
-
 def compute_primary_setups(df_4h, df_1d):
-    """Per 4h-bar: V20 trend-pullback setups en TWM exhaustion-signalen (causaal, geschikt voor historie)."""
     f = compute_indicator_frame(df_4h)
     sr = sr_sd_series(df_4h)
     f['support'] = sr['support']
@@ -272,7 +230,6 @@ def compute_primary_setups(df_4h, df_1d):
     f['timestamp'] = df_4h['timestamp'].values
     f['ret_6'] = f['close'].pct_change(6) * 100.0
 
-    # Dagelijkse ADX, uitgelijnd zonder lookahead: een daily bar is pas bruikbaar als hij gesloten is
     f1 = compute_indicator_frame(df_1d)
     daily = pd.DataFrame({
         'avail_ts': df_1d['timestamp'].values + TF_MS['1d'] - TF_MS['4h'],
@@ -300,11 +257,9 @@ def compute_primary_setups(df_4h, df_1d):
     f['setup_long'] = (long_s & ~short_s).fillna(False).astype(bool)
     f['setup_short'] = (short_s & ~long_s).fillna(False).astype(bool)
 
-    # TWM: uitputting buiten de Bollinger-band met volume
     f['twm_short'] = ((f['pct_b'] > 1.02) & (f['rsi'] > 75.0) & (f['vol_ratio'] > 1.4)).fillna(False).astype(bool)
     f['twm_long'] = ((f['pct_b'] < -0.02) & (f['rsi'] < 25.0) & (f['vol_ratio'] > 1.4)).fillna(False).astype(bool)
 
-    # Gegradeerde TWM-score (65..100): hoe extremer volume, RSI en band-overschrijding, hoe hoger
     ext = ((f['pct_b'] - 0.5).abs() - 0.5).clip(lower=0.0)
     rsi_ext = np.where(f['twm_short'], f['rsi'] - 75.0, 25.0 - f['rsi'])
     vol_pts = ((f['vol_ratio'] - 1.4) / 1.1).clip(0, 1) * 12.0
@@ -316,10 +271,9 @@ def compute_primary_setups(df_4h, df_1d):
 
 
 # ---------------------------------------------------------------------------
-# META-LABELING (gepoold over alle assets, triple barrier, purged walk-forward)
+# META-LABELING
 # ---------------------------------------------------------------------------
 def event_features(f, idx, sgn):
-    """Richting-genormaliseerde features: 1 pooled model voor long én short."""
     sub = f.iloc[list(idx)]
     close = sub['close'].values
     atr = sub['atr'].values
@@ -347,8 +301,6 @@ def event_features(f, idx, sgn):
 
 
 def barrier_outcome(hi, lo, cl, t, sgn, atr):
-    """Triple barrier vanaf bar t. Return (label, net_R) of None als de trade nog niet is afgelopen.
-    SL wordt eerst gerekend als beide barriers in dezelfde candle geraakt worden (conservatief)."""
     n = len(cl)
     if not (atr > 0):
         return None
@@ -367,13 +319,12 @@ def barrier_outcome(hi, lo, cl, t, sgn, atr):
         if hit_tp:
             return 1, META_TP_ATR / META_SL_ATR - cost_r
     if end > n - 1:
-        return None  # nog open: niet meenemen (voorkomt label-lek)
+        return None
     r = sgn * (cl[end] - entry) / (META_SL_ATR * atr)
     return 0, r - cost_r
 
 
 def build_meta_events(histories):
-    """histories: {asset: (df_4h, df_1d)} -> DataFrame met één rij per (gedeclusterd) setup-event."""
     parts = []
     horizon_ms = META_HORIZON_BARS * TF_MS['4h']
     for asset, (d4, d1) in histories.items():
@@ -418,7 +369,6 @@ def make_meta_classifier():
 
 
 def auc_standard_error(auc, n_pos, n_neg):
-    """Hanley & McNeil (1982)."""
     q1 = auc / (2.0 - auc)
     q2 = 2.0 * auc ** 2 / (1.0 + auc)
     var = (auc * (1 - auc) + (n_pos - 1) * (q1 - auc ** 2) + (n_neg - 1) * (q2 - auc ** 2)) / (n_pos * n_neg)
@@ -431,8 +381,6 @@ def breakeven_probability(median_atr_pct):
 
 
 def train_meta_model(events):
-    """Purged expanding-window walk-forward over gepoolde events + eindmodel.
-    Fail-closed: pack['ok'] is alleen True bij statistisch aantoonbare edge (zie META_* drempels)."""
     pack = {'ok': False, 'reason': 'geen events', 'model': None, 'oos': pd.DataFrame(),
             'n_events': 0, 'n_pos': 0, 'auc': None, 'z': None, 'p_be': None, 'threshold': None,
             'sel_n': 0, 'sel_mean_r': None, 'base_rate': None, 'trained_at': time.time()}
@@ -459,7 +407,7 @@ def train_meta_model(events):
         if test.empty:
             continue
         cut_ts = int(test['ts'].iloc[0])
-        train = ev[ev['ts_end'] < cut_ts]  # purge: geen trainlabel dat in de testperiode doorloopt
+        train = ev[ev['ts_end'] < cut_ts]
         if len(train) < 60 or train['label'].nunique() < 2:
             continue
         m = make_meta_classifier()
@@ -512,7 +460,8 @@ def get_meta_pack(symbols, force=False):
     histories = {}
     for symbol in symbols:
         asset = symbol.split('/')[0].split(':')[0]
-        d4 = fetch_ohlcv_paginated(exchange, symbol, '4h', META_HISTORY_4H)
+        # Gebruik nu de gecachete 4h data i.p.v. elke keer direct de beurs te overbelasten
+        d4 = fetch_cached_4h_shared(exchange, symbol, asset, total_bars=META_HISTORY_4H)
         time.sleep(2.0)
         d1 = fetch_cached_1d_shared(exchange, symbol, asset, total_bars=META_HISTORY_1D)
         time.sleep(2.0)
@@ -623,16 +572,10 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC', meta_pack=None):
     }
 
 
-# ---------------------------------------------------------------------------
-# STATE PUSH (zonder commit-spam)
-# ---------------------------------------------------------------------------
-def _without_ts(d):
-    return {k: v for k, v in d.items() if k != 'updated_at'}
-
-
 def push_state_to_github(filename, data):
-    """Schrijft/pusht alleen als de inhoud (zonder updated_at) veranderd is, of als de
-    heartbeat verlopen is (zodat traders de state niet als 'te oud' afkeuren)."""
+    def _without_ts(d):
+        return {k: v for k, v in d.items() if k != 'updated_at'}
+
     if os.path.exists(filename):
         try:
             with open(filename, 'r', encoding='utf-8') as f:
