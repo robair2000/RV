@@ -20,7 +20,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
             
             html = "<html><head><title>V20 Trader - Live Ranking</title></head><body style='font-family: Arial; padding: 20px; background-color: #f4f4f9;'>"
-            html += "<h2 style='color: #333;'>🏆 V20 Live Kucoin Coins Ranking (Trader Dashboard)</h2>"
+            html += "<h2 style='color: #333;'>🏆 V20 Live Kucoin Coins Ranking (Trader Dashboard - Gehard)</h2>"
             
             ranking_file = 'kucoin_best_coins_ranking.csv'
             if os.path.exists(ranking_file):
@@ -109,15 +109,34 @@ COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 7200))
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 
-# Dynamisch instelbaar via Render Environment Variables (standaard 5)
 MAX_CONCURRENT_POSITIONS = int(os.environ.get('MAX_CONCURRENT_POSITIONS', 5))
 MIN_RRR = 3.0
 TP_ATR_mult_BASE = 5.0
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
+MAX_CANDLE_AGE_SECONDS = 4.5 * 3600  # Stricte candle leeftijd check (~4.5 uur)
 
 active_trades = {}
 symbol_cooldowns = {}
 symbol_last_traded_candles = {}
+
+# --- STATUS LADEN VANUIT GITHUB BIJ OPSTART ---
+def pull_status_from_github():
+    global active_trades, symbol_cooldowns, symbol_last_traded_candles
+    token = os.environ.get('GITHUB_TOKEN', '')
+    url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/trader_status.json?ref={GITHUB_BRANCH}'
+    headers = {'Accept': 'application/vnd.github.raw+json', 'User-Agent': 'trader-worker'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            active_trades = data.get('active_trades', {})
+            symbol_cooldowns = data.get('cooldowns', {})
+            symbol_last_traded_candles = data.get('last_traded_candles', {})
+            print(f"📥 V20 Status hersteld van GitHub: {len(active_trades)} actieve trades.")
+    except Exception:
+        print("ℹ️ Geen eerdere V20 status gevonden op GitHub, starten met schone lei.")
 
 exchange = ccxt.kucoinfutures({
     'apiKey': os.getenv('KUCOIN_API_KEY', ''),
@@ -142,7 +161,8 @@ def push_trader_status_to_github():
     data = {
         'updated_at': time.time(),
         'active_trades': active_trades,
-        'cooldowns': symbol_cooldowns
+        'cooldowns': symbol_cooldowns,
+        'last_traded_candles': symbol_last_traded_candles
     }
     filename = 'trader_status.json'
     content_bytes = json.dumps(data, indent=2).encode('utf-8')
@@ -240,8 +260,13 @@ def load_pattern_state(asset):
         return None
         
     updated_at = float(pst.get('updated_at', 0) or 0)
-    if time.time() - updated_at > MAX_PATTERN_AGE_SECONDS:
-        print(f"⚠️ Waarschuwing: Pattern state voor {asset} is te oud ({int((time.time() - updated_at)/3600)} uur). Agent lijkt inactief!")
+    last_candle_ts = float(pst.get('last_candle_ts', 0) or 0)
+    current_time = time.time()
+
+    if current_time - updated_at > MAX_PATTERN_AGE_SECONDS:
+        return None
+    if last_candle_ts > 0 and current_time - last_candle_ts > MAX_CANDLE_AGE_SECONDS:
+        print(f"⚠️ V20 Waarschuwing: Pattern state voor {asset} heeft te oude candle ({int((current_time - last_candle_ts)/3600)} uur oud).")
         return None
         
     return pst
@@ -255,7 +280,8 @@ def close_position(symbol, side, contracts):
         try:
             open_orders = exchange.fetch_open_orders(symbol)
             for o in open_orders:
-                if 'v20_' in str(o.get('clientOrderId', '')):
+                c_id = str(o.get('clientOrderId', ''))
+                if 'v20_' in c_id:
                     exchange.cancel_order(o['id'], symbol)
         except Exception:
             pass
@@ -265,7 +291,8 @@ def close_position(symbol, side, contracts):
             {'reduceOnly': True, 'marginMode': DESIRED_MARGIN_MODE}
         ))
         return True
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ V20 sluitfout voor {symbol}: {e}")
         return False
 
 
@@ -283,22 +310,11 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
         })
         new_order_id = new_order.get('id') if new_order else None
 
-        if old_sl_order_id:
-            try:
-                exchange.cancel_order(old_sl_order_id, symbol)
-            except Exception:
-                pass
-
         open_orders = exchange.fetch_open_orders(symbol)
         for o in open_orders:
             order_id = o.get('id')
             c_id = str(o.get('clientOrderId', ''))
-            o_type = str(o.get('type', '')).lower()
-            
-            if 'take profit' in o_type or 'tp' in c_id or o_type == 'limit':
-                continue
-            
-            if order_id != new_order_id and ('v20_sl_' in c_id or o_type == 'stop'):
+            if order_id != new_order_id and 'v20_sl_' in c_id:
                 try:
                     exchange.cancel_order(order_id, symbol)
                 except Exception:
@@ -306,7 +322,7 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
                     
         return new_order_id
     except Exception as e:
-        print(f"⚠️ Kon exchange stop-loss niet bijwerken voor {symbol}: {e}")
+        print(f"⚠️ V20 Kon exchange stop-loss niet bijwerken voor {symbol}: {e}")
         return old_sl_order_id
 
 
@@ -327,6 +343,12 @@ def manage_open_positions_and_trailing_stops(symbols):
         side = pos.get('side')
         if side not in ('long', 'short'):
             continue
+            
+        # KRITISCHE FIX: Negeer posities die niet in onze eigen active_trades staan (voorkomt bot-gevechten!)
+        trade = active_trades.get(symbol)
+        if trade is None:
+            continue
+            
         open_symbols.add(symbol)
         entry = float(pos.get('entryPrice') or 0)
 
@@ -334,25 +356,6 @@ def manage_open_positions_and_trailing_stops(symbols):
             price = float(exchange.fetch_ticker(symbol)['last'])
         except Exception:
             continue
-
-        trade = active_trades.get(symbol)
-        if trade is None:
-            base = symbol.split('/')[0].split(':')[0]
-            st = load_state(base, '4h')
-            pst = load_pattern_state(base)
-            trail_mult = float(pst.get('recommended_trailing_mult', 2.5)) if pst else 2.5
-
-            atr = entry * float(st['atr_pct']) / 100.0 if (st and st.get('atr_pct')) else entry * 0.02
-            sgn = 1 if side == 'long' else -1
-            tp_mult = max(TP_ATR_mult_BASE, trail_mult * (MIN_RRR + 0.2))
-            trade = active_trades[symbol] = {
-                'side': side, 'entry': entry, 'peak': price, 'atr': atr,
-                'sl': entry - sgn * trail_mult * atr,
-                'tp': entry + sgn * tp_mult * atr,
-                'trailing_mult': trail_mult,
-                'breakeven_secured': False,
-            }
-            state_changed = True
 
         atr = trade['atr']
         trail_mult = trade.get('trailing_mult', 2.5)
@@ -449,11 +452,12 @@ def compute_contract_amount(asset, symbol, price, leverage):
 
 
 def execute_live_trades_scan(symbols):
-    print(f"🔍 [Trader Worker] Start marktscan voor symbolen: {symbols}")
     current_time = time.time()
     expired_cooldowns = [sym for sym, ts in symbol_cooldowns.items() if current_time - ts > COOLDOWN_SECONDS]
     for sym in expired_cooldowns:
         symbol_cooldowns.pop(sym, None)
+    if expired_cooldowns:
+        push_trader_status_to_github()
 
     pull_latest_states_from_github(symbols)
     try:
@@ -474,16 +478,19 @@ def execute_live_trades_scan(symbols):
         if o.get('status') == 'open':
             pending_order_symbols.add(o.get('symbol'))
 
-    if len(active_symbols) >= MAX_CONCURRENT_POSITIONS:
-        print(f"ℹ️ Maximaal aantal actieve posities bereikt ({len(active_symbols)}/{MAX_CONCURRENT_POSITIONS}).")
+    # Tel alleen eigen actieve posities mee voor het concurrency limiet
+    my_active_count = len([s for s in active_symbols if s in active_trades])
+    if my_active_count >= MAX_CONCURRENT_POSITIONS:
+        print(f"ℹ️ V20 Maximaal aantal eigen actieve posities bereikt ({my_active_count}/{MAX_CONCURRENT_POSITIONS}).")
         return
 
     for symbol in symbols:
-        if symbol not in exchange.markets or symbol in active_symbols or symbol in symbol_cooldowns:
+        if symbol not in exchange.markets or symbol in symbol_cooldowns:
+            continue
+        # Als er al een positie op dit symbool loopt, skip
+        if symbol in active_symbols:
             continue
         if symbol in pending_order_symbols:
-            continue
-        if current_time - symbol_cooldowns.get(symbol, 0) < COOLDOWN_SECONDS:
             continue
         try:
             asset = symbol.split('/')[0].split(':')[0]
@@ -563,18 +570,29 @@ def evaluate_and_trade(asset, symbol):
 
     side = 'buy' if is_long else 'sell'
     if DRY_RUN:
-        print(f"   🧪 [DRY RUN] Zou order plaatsen: {side} {amount}x {symbol} op limietprijs {limit_price}")
+        print(f"   🧪 [DRY RUN V20] Zou limit order plaatsen: {side} {amount}x {symbol} @ {limit_price}")
         return
 
-    params = {
-        'stopLoss': {'triggerPrice': stop_loss_val},
-        'takeProfit': {'triggerPrice': take_profit_val},
-        'marginMode': DESIRED_MARGIN_MODE,
-        'clientOrderId': f"v20_entry_{int(time.time() * 1000)}"
-    }
     try:
-        order = execute_with_retry(lambda: exchange.create_order(symbol, 'limit', side, amount, limit_price, params))
-        print(f"   🚀 SUCCES: Limit order geplaatst voor {symbol} ({side} {amount} contracten @ {limit_price})!")
+        # Plaats schone limit order zonder ingebedde sl/tp params om weesorders te voorkomen
+        order = execute_with_retry(lambda: exchange.create_order(symbol, 'limit', side, amount, limit_price, {
+            'marginMode': DESIRED_MARGIN_MODE,
+            'clientOrderId': f"v20_entry_{int(time.time() * 1000)}"
+        }))
+        
+        # Plaats direct expliciete SL en TP orders met unieke v20_ prefix
+        close_side = 'sell' if is_long else 'buy'
+        exchange.create_order(symbol, 'stop', close_side, amount, None, {
+            'stopPrice': stop_loss_val,
+            'reduceOnly': True,
+            'clientOrderId': f"v20_sl_{int(time.time() * 1000)}"
+        })
+        exchange.create_order(symbol, 'limit', close_side, amount, take_profit_val, {
+            'reduceOnly': True,
+            'clientOrderId': f"v20_tp_{int(time.time() * 1000)}"
+        })
+
+        print(f"   🚀 V20 SUCCES: Limit order + SL/TP geplaatst voor {symbol} ({side} {amount} contracten @ {limit_price})!")
         
         if candle_ts > 0:
             symbol_last_traded_candles[symbol] = candle_ts
@@ -592,6 +610,7 @@ def evaluate_and_trade(asset, symbol):
 
 
 if __name__ == '__main__':
+    pull_status_from_github()  # Status inladen bij opstart!
     threading.Thread(target=run_server, daemon=True).start()
     print("🚀 V20 Trader Worker gestart (scan interval: 60 seconden).")
     while True:
