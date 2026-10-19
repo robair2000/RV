@@ -1,14 +1,15 @@
 {
-  "pattern_score": 91.88769325613976,
-  "pattern_signal": "long",
-  "recommended_leverage": 3,
+  "pattern_score": 50.0,
+  "pattern_signal": "none",
+  "twm_signal": "none",
+  "twm_score": 50.0,
+  "recommended_leverage": 1,
   "recommended_trailing_mult": 2.5,
   "min_score_required": 75.0,
-  "strictness_mode": "explosive_reversal_hunter",
+  "strictness_mode": "trend_pullback_with_auc_gate",
   "atr_pct": 1.51,
   "adx_4h": 50.6,
   "volume_expansion_ratio": 0.8,
-  "is_volume_expansion": false,
-  "is_bollinger_squeeze": true,
-  "updated_at": 1792400666.9661613
+  "last_candle_ts": 1791662400000,
+  "updated_at": 1792402827.1676111
 }
