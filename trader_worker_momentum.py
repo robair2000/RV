@@ -121,13 +121,12 @@ MAX_CONCURRENT_POSITIONS = int(os.environ.get('MAX_CONCURRENT_POSITIONS', 5))
 TP_ATR_mult_BASE = 5.0  
 TRAILING_SL_MULT = 2.0  
 MAX_STATE_AGE_SECONDS = 8 * 3600
-MAX_CANDLE_AGE_SECONDS = 4.5 * 3600  # Stricte candle-leeftijd check (~4.5 uur)
+MAX_CANDLE_AGE_SECONDS = 8.75 * 3600  # 4h bar + 4h buffer + marge
 
 active_trades = {}
 symbol_cooldowns = {}
 symbol_last_traded_candles = {}
 
-# --- STATUS LADEN VANUIT GITHUB BIJ OPSTART (Voorkomt geheugenverlies bij restart) ---
 def pull_status_from_github():
     global active_trades, symbol_cooldowns, symbol_last_traded_candles
     token = os.environ.get('GITHUB_TOKEN', '')
@@ -226,15 +225,17 @@ def load_pattern_state(asset):
         return None
         
     updated_at = float(pst.get('updated_at', 0) or 0)
-    last_candle_ts = float(pst.get('last_candle_ts', 0) or 0)
+    last_candle_ts_ms = float(pst.get('last_candle_ts', 0) or 0)
     current_time = time.time()
 
-    # Stricte leeftijdchecks
     if current_time - updated_at > MAX_STATE_AGE_SECONDS:
         return None
-    if last_candle_ts > 0 and current_time - last_candle_ts > MAX_CANDLE_AGE_SECONDS:
-        print(f"⚠️ TWM Waarschuwing: Pattern state voor {asset} heeft te oude candle ({int((current_time - last_candle_ts)/3600)} uur oud).")
-        return None
+    
+    if last_candle_ts_ms > 0:
+        candle_age_seconds = current_time - (last_candle_ts_ms / 1000.0)
+        if candle_age_seconds > MAX_CANDLE_AGE_SECONDS:
+            print(f"⚠️ TWM Waarschuwing: Pattern state voor {asset} heeft te oude candle ({int(candle_age_seconds/3600)} uur oud).")
+            return None
         
     return pst
 
@@ -244,7 +245,7 @@ def close_position(symbol, side, contracts):
     if DRY_RUN:
         return True
     try:
-        open_orders = exchange.fetch_open_orders(symbol)
+        open_orders = execute_with_retry(lambda: exchange.fetch_open_orders(symbol))
         for o in open_orders:
             c_id = str(o.get('clientOrderId', ''))
             if 'twm_' in c_id:
@@ -277,8 +278,7 @@ def update_exchange_stop_loss(symbol, side, contracts, new_sl, old_sl_order_id=N
         })
         new_order_id = new_order.get('id') if new_order else None
 
-        # Ruim oude twm stops op basis van prefix op i.p.v. type != 'limit'
-        open_orders = exchange.fetch_open_orders(symbol)
+        open_orders = execute_with_retry(lambda: exchange.fetch_open_orders(symbol))
         for o in open_orders:
             order_id = o.get('id')
             c_id = str(o.get('clientOrderId', ''))
@@ -311,7 +311,6 @@ def manage_open_positions_and_trailing_stops(symbols):
         if side not in ('long', 'short'):
             continue
             
-        # KRITISCHE FIX: Negeer posities die niet in onze eigen active_trades staan (voorkomt bot-gevechten!)
         trade = active_trades.get(symbol)
         if trade is None:
             continue
@@ -359,7 +358,6 @@ def manage_open_positions_and_trailing_stops(symbols):
                 active_trades.pop(symbol, None)
                 state_changed = True
 
-    # Prune actieve trades die niet meer op de exchange bestaan
     to_remove = [sym for sym in active_trades if sym not in open_symbols]
     if to_remove:
         for sym in to_remove:
@@ -416,7 +414,6 @@ def execute_live_trades_scan(symbols):
         if abs(float(p.get('contracts') or 0)) > 0:
             active_symbols.add(p.get('symbol'))
 
-    # Tel alleen eigen actieve posities mee voor het concurrency limiet
     my_active_count = len([s for s in active_symbols if s in active_trades])
     if my_active_count >= MAX_CONCURRENT_POSITIONS:
         return
@@ -424,7 +421,6 @@ def execute_live_trades_scan(symbols):
     for symbol in symbols:
         if symbol not in exchange.markets or symbol in symbol_cooldowns:
             continue
-        # Als er al een positie op dit symbool loopt (van welke bot dan ook), skip
         if symbol in active_symbols:
             continue
         try:
@@ -452,15 +448,13 @@ def evaluate_and_trade_reversal(asset, symbol):
     if twm_signal not in ('long', 'short') or twm_score < MIN_BOSS_SCORE:
         return
 
+    adx_4h = float(pst.get('adx_4h', 20.0))
+    if adx_4h > 28.0:
+        return
+
     try:
         price = float(exchange.fetch_ticker(symbol)['last'])
     except Exception:
-        return
-
-    # TWM Reversal Logica met ADX Trend-Filter (Voorkomt de Band Walk trap)
-    adx_4h = float(pst.get('adx_4h', 20.0))
-    if adx_4h > 28.0:
-        # Markt is te trendend; mean-reversion/fading is te riskant!
         return
 
     atr_pct = float(pst.get('atr_pct', 2.0))
@@ -483,24 +477,35 @@ def evaluate_and_trade_reversal(asset, symbol):
         print(f"🧪 [DRY RUN TWM] Zou order plaatsen: {side} {amount}x {symbol}")
         return
 
-    # Plaats marktorder zonder ingebedde sl/tp om weesorders te voorkomen, zet ze direct expliciet na entry
+    # KRITISCHE FIX: Beveiliging tegen naked positions (als SL mislukt, direct sluiten!)
     try:
         entry_order = exchange.create_order(symbol, 'market', side, amount, None, {
             'marginMode': DESIRED_MARGIN_MODE,
             'clientOrderId': f"twm_entry_{int(time.time() * 1000)}"
         })
         
-        # Plaats expliciete SL en TP met unieke twm_ prefix
         close_side = 'sell' if is_long else 'buy'
-        exchange.create_order(symbol, 'stop', close_side, amount, None, {
-            'stopPrice': stop_loss_val,
-            'reduceOnly': True,
-            'clientOrderId': f"twm_sl_{int(time.time() * 1000)}"
-        })
-        exchange.create_order(symbol, 'limit', close_side, amount, take_profit_val, {
-            'reduceOnly': True,
-            'clientOrderId': f"twm_tp_{int(time.time() * 1000)}"
-        })
+        
+        # Stop-Loss plaatsen
+        try:
+            exchange.create_order(symbol, 'stop', close_side, amount, None, {
+                'stopPrice': stop_loss_val,
+                'reduceOnly': True,
+                'clientOrderId': f"twm_sl_{int(time.time() * 1000)}"
+            })
+        except Exception as sl_err:
+            print(f"🚨 KRITISCHE FOUT: SL mislukt voor {symbol} na marktentry! Sluit positie direct om naked position te voorkomen: {sl_err}")
+            close_position(symbol, side, amount)
+            return
+
+        # Take-Profit plaatsen
+        try:
+            exchange.create_order(symbol, 'limit', close_side, amount, take_profit_val, {
+                'reduceOnly': True,
+                'clientOrderId': f"twm_tp_{int(time.time() * 1000)}"
+            })
+        except Exception as tp_err:
+            print(f"⚠️ Waarschuwing: TP plaatsen mislukt voor {symbol}: {tp_err}")
 
         if candle_ts > 0:
             symbol_last_traded_candles[symbol] = candle_ts
@@ -510,13 +515,13 @@ def evaluate_and_trade_reversal(asset, symbol):
             'sl': stop_loss_val, 'tp': take_profit_val, 'trailing_mult': TRAILING_SL_MULT, 'breakeven_secured': False,
         }
         push_trader_status_to_github()
-        print(f"🚀 TWM SUCCES: Positie geopend voor {symbol} ({side} {amount})")
+        print(f"🚀 TWM SUCCES: Positie + Stop-Loss geplaatst voor {symbol} ({side} {amount})")
     except Exception as e:
         print(f"⚠️ TWM orderfout {symbol}: {e}")
 
 
 if __name__ == '__main__':
-    pull_status_from_github() # Status inladen bij opstart!
+    pull_status_from_github()
     threading.Thread(target=run_server, daemon=True).start()
     print("🚀 TWM Mean-Reversion Sniper gestart.")
     while True:
