@@ -44,7 +44,6 @@ GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
 def pull_ranking_from_github():
-    """Haalt de meest recente ranking CSV op van GitHub zodat alle workers synchroon lopen."""
     filename = 'kucoin_best_coins_ranking.csv'
     token = os.environ.get('GITHUB_TOKEN', '')
     url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}?ref={GITHUB_BRANCH}'
@@ -62,14 +61,10 @@ def pull_ranking_from_github():
         print(f"⚠️ Kon ranking CSV niet ophalen van GitHub ({e}), we gebruiken lokale versie indien aanwezig.")
 
 
-# --- CONFIGURATIE V20 S&R & SUPPLY/DEMAND AGENT (Instelbaar via Render Env Vars) ---
 MIN_ADX_TREND = float(os.environ.get('MIN_ADX_TREND', 18.0))
 MIN_BOSS_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 84.0))
 
 def get_combined_trading_assets(top_n=5):
-    """
-    Combineert altijd de vaste kern met de geldige top N futures uit de ranking CSV.
-    """
     core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_symbols = []
@@ -96,13 +91,6 @@ CHECK_INTERVAL_SECONDS = 1800
 EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
 exchange = getattr(ccxt, EXCHANGE_ID)({'enableRateLimit': True})
-
-
-def resolve_symbol(asset):
-    primary = f"{asset}/USDT:USDT"
-    if primary in exchange.markets:
-        return primary
-    return f"{asset}/USDT"
 
 
 def fetch_historical_candles(symbol, timeframe, limit=250):
@@ -145,15 +133,23 @@ def compute_smart_indicators(df):
     signal_line = macd.ewm(span=9, adjust=False).mean()
     macd_hist = macd - signal_line
 
+    # Bollinger Bands & Squeeze Berekening
     sma20 = close.rolling(20).mean()
     std20 = close.rolling(20).std()
     upper_bb = sma20 + (std20 * 2.0)
     lower_bb = sma20 - (std20 * 2.0)
+    bb_width = (upper_bb - lower_bb) / (sma20 + 1e-8)
+    is_bb_squeeze = bool(bb_width.iloc[-1] <= bb_width.tail(20).min() * 1.1)
+
     pct_b = (close - lower_bb) / ((upper_bb - lower_bb) + 1e-8)
     ema9 = close.ewm(span=9, adjust=False).mean()
 
+    # Volume Expansie Ratio Berekening
     vol_sma = volume.rolling(20).mean()
-    is_vol_expansion = volume.iloc[-1] > (vol_sma.iloc[-1] * 1.15)
+    current_vol = volume.iloc[-1]
+    avg_vol = vol_sma.iloc[-1] if not math.isnan(vol_sma.iloc[-1]) and vol_sma.iloc[-1] > 0 else 1.0
+    vol_expansion_ratio = float(current_vol / avg_vol)
+    is_vol_expansion = vol_expansion_ratio > 1.35
 
     return {
         'close': float(close.iloc[-1]),
@@ -163,7 +159,9 @@ def compute_smart_indicators(df):
         'adx': float(adx.iloc[-1]) if not math.isnan(adx.iloc[-1]) else 0.0,
         'macd_hist': float(macd_hist.iloc[-1]),
         'pct_b': float(pct_b.iloc[-1]),
-        'is_volume_expansion': bool(is_vol_expansion)
+        'volume_expansion_ratio': round(vol_expansion_ratio, 2),
+        'is_volume_expansion': bool(is_vol_expansion),
+        'is_bollinger_squeeze': bool(is_bb_squeeze)
     }
 
 
@@ -255,7 +253,7 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
             'recommended_leverage': 1, 
             'recommended_trailing_mult': 2.5, 
             'min_score_required': MIN_BOSS_SCORE,
-            'strictness_mode': 'v20_sr_sd_confluence',
+            'strictness_mode': 'explosive_reversal_hunter',
             'confidence': 0.0
         }
 
@@ -296,9 +294,7 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
 
     if signal != 'none':
         meta_prob = train_meta_classifier(df_4h)
-        
         effective_prob = meta_prob if signal == 'long' else (1.0 - meta_prob)
-        
         score += (effective_prob * 15.0)
         
         threshold_map = {'BTC': 0.46, 'ETH': 0.46, 'LINK': 0.40, 'SOL': 0.40, 'AVAX': 0.40}
@@ -317,9 +313,12 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
         'recommended_leverage': int(leverage),
         'recommended_trailing_mult': float(trailing_mult),
         'min_score_required': MIN_BOSS_SCORE,
-        'strictness_mode': 'v20_sr_sd_confluence',
+        'strictness_mode': 'explosive_reversal_hunter',
         'atr_pct': round(ind_4h['atr_pct'], 2),
         'adx_4h': round(ind_4h['adx'], 2),
+        'volume_expansion_ratio': ind_4h['volume_expansion_ratio'],
+        'is_volume_expansion': ind_4h['is_volume_expansion'],
+        'is_bollinger_squeeze': ind_4h['is_bollinger_squeeze'],
         'updated_at': time.time()
     }
 
@@ -376,7 +375,6 @@ def push_state_to_github(filename, data):
 
 def run_final_boss_scan():
     print("--- [V20 S&R & S&D Agent] Start marktscan ---")
-    
     pull_ranking_from_github()
     symbols = get_combined_trading_assets(top_n=5)
 
@@ -388,17 +386,14 @@ def run_final_boss_scan():
 
     for symbol in symbols:
         asset = symbol.split('/')[0].split(':')[0]
-        
         df_4h = fetch_historical_candles(symbol, '4h', limit=250)
         df_1d = fetch_historical_candles(symbol, '1d', limit=250)
         
         if not df_4h.empty and not df_1d.empty:
             analysis = analyze_advanced_patterns(df_4h, df_1d, asset=asset)
-            
             pattern_filename = f'pattern_state_{asset.lower()}_4h.json'
             push_state_to_github(pattern_filename, analysis)
-
-            print(f"👑 {asset} V20 Agent: Signaal={analysis['pattern_signal'].upper()} | Score={analysis['pattern_score']}")
+            print(f"👑 {asset} V20 Agent: Signaal={analysis['pattern_signal'].upper()} | VolRatio={analysis['volume_expansion_ratio']} | Squeeze={analysis['is_bollinger_squeeze']}")
         time.sleep(5.0)
 
 
