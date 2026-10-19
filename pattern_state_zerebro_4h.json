@@ -1,11 +1,14 @@
 {
-  "pattern_score": 50.0,
-  "pattern_signal": "none",
-  "recommended_leverage": 2,
+  "pattern_score": 92.31686636805534,
+  "pattern_signal": "long",
+  "recommended_leverage": 3,
   "recommended_trailing_mult": 2.5,
   "min_score_required": 75.0,
-  "strictness_mode": "v20_sr_sd_confluence",
+  "strictness_mode": "explosive_reversal_hunter",
   "atr_pct": 2.34,
-  "adx_4h": 47.13,
-  "updated_at": 1792387951.2083645
+  "adx_4h": 40.01,
+  "volume_expansion_ratio": 0.87,
+  "is_volume_expansion": false,
+  "is_bollinger_squeeze": true,
+  "updated_at": 1792400684.3638349
 }
