@@ -9,13 +9,13 @@ import urllib.request
 
 # Pagina configuratie
 st.set_page_config(
-    page_title="RV Institutional Quant & Trader Dashboard (V20)",
+    page_title="RV Institutional Quant & Trader Dashboard (V20 & TWM)",
     page_icon="⚡",
     layout="wide"
 )
 
-st.title("⚡ RV Institutional S&R / S&D Swing Hub (V20)")
-st.markdown("*Real-time ML Meta-Labeling, S&R Confluence Gatekeeper & Live Exchange Posities*")
+st.title("⚡ RV Institutional S&R / S&D Swing Hub (V20 & TWM Sniper)")
+st.markdown("*Real-time ML Meta-Labeling, S&R Confluence Gatekeeper & Live Reversal Sniper Status*")
 
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
@@ -33,7 +33,6 @@ def load_json_from_github_or_local(filename):
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read().decode('utf-8'))
     except Exception:
-        # Fallback naar lokaal bestand als GitHub faalt
         if os.path.exists(filename):
             try:
                 with open(filename, 'r', encoding='utf-8') as f:
@@ -48,7 +47,6 @@ def get_dashboard_trading_assets(top_n=5):
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_assets = []
     
-    # Probeer ranking ook vers op te halen
     try:
         url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{ranking_file}?ref={GITHUB_BRANCH}'
         token = os.environ.get('GITHUB_TOKEN', '')
@@ -133,14 +131,16 @@ def get_exchange_client():
         pass
     return exch
 
-# INITIALISEER DE EXCHANGE CLIENT VOOR POSITIES
 exchange = get_exchange_client()
 
-# --- MAAK TWEE TABS AAN ---
-tab1, tab2 = st.tabs(["🚀 Dashboard & Live Trades", "⚙️ Systeem & Worker Status"])
+# --- MAAK DRIE TABS AAN ---
+tab1, tab2, tab3 = st.tabs([
+    "🚀 Dashboard & Live Trades", 
+    "⚙️ Systeem & Worker Status", 
+    "🎯 TWM Reversal Sniper"
+])
 
 with tab1:
-    # --- LIVE KUCOIN POSITIES SECTIE ---
     st.markdown("### 💼 Live KuCoin Futures Posities (Handmatig & Automatisch)")
     try:
         positions = exchange.fetch_positions()
@@ -180,11 +180,9 @@ with tab1:
 
     st.markdown("---")
 
-    # Haal live data op voor de geselecteerde asset
     symbol = f"{asset_code}/USDT"
     df = load_dashboard_data(symbol, interval_info)
 
-    # State bestanden - Altijd vers ophalen van GitHub!
     state_file = f"model_state_{asset_code.lower()}_{interval_code}.json"
     pattern_file = f"pattern_state_{asset_code.lower()}_4h.json"
 
@@ -307,3 +305,28 @@ with tab2:
     st.markdown("---")
     st.markdown("#### 🔄 Worker Synchronisatie & GitHub Status")
     st.info("Alle workers synchroniseren direct via GitHub. Het dashboard haalt nu altijd de meest recente data op.")
+
+with tab3:
+    st.markdown("### 🎯 TWM Reversal Sniper Status (`trader_status_momentum.json`)")
+    st.markdown("*Real-time monitor voor de Explosive Reversal Hunter (Volume-expansie & Bollinger Squeeze S&R Bounces)*")
+    
+    twm_status = load_json_from_github_or_local("trader_status_momentum.json")
+    if twm_status:
+        up_time = twm_status.get('updated_at', 0)
+        if up_time > 0:
+            time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(up_time))
+            st.caption(f"TWM Laatst bijgewerkt: {time_str}")
+        
+        twm_active = twm_status.get('active_trades', {})
+        if twm_active:
+            st.success(f"🚀 **Actieve TWM Reversal Sniper Posities:** {len(twm_active)}")
+            st.json(twm_active)
+        else:
+            st.info("ℹ️ Geen actieve TWM sniper posities op dit moment. De bot scant actief op volume-uitbraken en S&R squeezes.")
+        
+        twm_cooldowns = twm_status.get('cooldowns', {})
+        if twm_cooldowns:
+            st.markdown("**Actieve TWM Cooldowns:**")
+            st.json(twm_cooldowns)
+    else:
+        st.warning("⏳ Nog geen TWM status bestand (`trader_status_momentum.json`) gevonden op GitHub of lokaal.")
