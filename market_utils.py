@@ -14,7 +14,7 @@ def tf_to_ms(timeframe):
     return TF_MS[timeframe]
 
 
-def fetch_ohlcv_paginated(exchange, symbol, timeframe, total_bars, page_limit=200, max_pages=40, pause=0.15):
+def fetch_ohlcv_paginated(exchange, symbol, timeframe, total_bars, page_limit=200, max_pages=40, pause=0.6):
     """Haalt tot `total_bars` candles op via meerdere calls (since-paginatie).
 
     KuCoin Futures geeft per call maar een beperkt aantal candles terug; zonder
