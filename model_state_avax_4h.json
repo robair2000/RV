@@ -12,7 +12,7 @@
         "VWAP_dist",
         "vol_ratio"
     ],
-    "last_trained_timestamp": 1792444448.7409153,
+    "last_trained_timestamp": 1792449177.274963,
     "model_weights": {
         "xgb": 0.33257170695119165,
         "cat": 0.3354868939217149,
@@ -44,5 +44,5 @@
     "data_status": "ok",
     "stop_loss": 0.0,
     "take_profit": 0.0,
-    "updated_at": 1792444448
+    "updated_at": 1792449177
 }
