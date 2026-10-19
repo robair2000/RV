@@ -213,15 +213,25 @@ def pull_latest_states_from_github(symbols):
             pass
 
 
+MAX_PATTERN_AGE_SECONDS = 8 * 3600  # Maximaal 8 uur oud
+
 def load_pattern_state(asset):
     path = f'pattern_state_{asset.lower()}_4h.json'
     if not os.path.exists(path):
         return None
     try:
         with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            pst = json.load(f)
     except Exception:
         return None
+        
+    # KRITISCHE CHECK: Is de agent gestopt of is het bestand te oud?
+    updated_at = float(pst.get('updated_at', 0) or 0)
+    if time.time() - updated_at > MAX_PATTERN_AGE_SECONDS:
+        print(f"⚠️ Waarschuwing: Pattern state voor {asset} is te oud ({int((time.time() - updated_at)/3600)} uur). Agent lijkt inactief!")
+        return None
+        
+    return pst
 
 
 def close_position(symbol, side, contracts):
