@@ -20,7 +20,7 @@ from catboost import CatBoostRegressor
 from sklearn.ensemble import RandomForestRegressor
 
 from github_utils import github_put
-from market_utils import fetch_ohlcv_paginated
+from market_utils import fetch_ohlcv_paginated, fetch_cached_1d_shared
 
 warnings.filterwarnings('ignore')
 logging.getLogger('xgboost').setLevel(logging.CRITICAL)
@@ -63,8 +63,7 @@ timeframes = {
     '1d': {'interval': '1d', 'limit': 1000, 'lookback': 800, 'min_interval_seconds': 23 * 3600},
 }
 
-# Stationaire features. funding_rate en orderbook_imbalance zijn verwijderd: ze waren één live
-# snapshot over de hele historie (constante kolom) en dus informatieloos.
+# Stationaire features.
 base_features = [
     'return_1', 'return_3', 'RSI', 'atr_ratio', 'bb_position', 'MACD_hist',
     'OBV_slope', 'VWAP_dist', 'vol_ratio',
@@ -74,16 +73,16 @@ MODEL_NAMES = ['xgb', 'cat', 'rf']
 LEARNING_RATE = 0.03
 
 # --- Validatie: expanding walk-forward met embargo ---
-LABEL_HORIZON = 3          # label = rendement over 3 candles (overlappend)
-EMBARGO = LABEL_HORIZON    # gat tussen train en test, tegen label-overlap
-OOS_FRACTION = 0.50        # laatste 50% van het venster is out-of-sample, verdeeld over folds
+LABEL_HORIZON = 3          
+EMBARGO = LABEL_HORIZON    
+OOS_FRACTION = 0.50        
 WF_FOLDS = 4
 MIN_FOLD_SIZE = 25
 MIN_TRAIN_ROWS = 120
 MIN_FEATURE_ROWS = 100
 MIN_LOOKBACK = 300
 
-QUANT_MIN_Z = float(os.environ.get('QUANT_MIN_Z', 1.28))       # one-sided ~90%
+QUANT_MIN_Z = float(os.environ.get('QUANT_MIN_Z', 1.28))       
 QUANT_MIN_JOINT_N = int(os.environ.get('QUANT_MIN_JOINT_N', 30))
 
 SL_ATR_MULT = 2.5
@@ -94,7 +93,7 @@ exchange = ccxt.kucoinfutures({
 })
 
 
-STATE_VERSION = 3  # Verhoog dit getal bij ingrijpende logica-updates om oude states automatisch te resetten
+STATE_VERSION = 3  
 
 
 def default_state():
@@ -175,12 +174,11 @@ def fetch_data_safely(symbol, tf_info):
         df = fetch_ohlcv_paginated(exchange, symbol, tf_info['interval'], tf_info['limit'])
         if len(df) >= 5:
             return df
-        # Fallback: één enkele call
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf_info['interval'], limit=200)
         if not ohlcv or len(ohlcv) < 5:
             return pd.DataFrame()
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        return df.iloc[:-1].reset_index(drop=True)  # KRITISCH: incomplete bar weg (repainting)
+        return df.iloc[:-1].reset_index(drop=True)
     except Exception as e:
         print(f"❌ KuCoin Futures fetch fout voor {symbol}: {e}")
         return pd.DataFrame()
@@ -218,7 +216,6 @@ def compute_features(df):
     ema_26 = close.ewm(span=26, adjust=False).mean()
     macd_line = ema_12 - ema_26
     macd_signal = macd_line.ewm(span=9, adjust=False).mean()
-    # Genormaliseerd op prijs -> stationair en vergelijkbaar over tijd
     df['MACD_hist'] = (macd_line - macd_signal) / (close + 1e-8) * 100.0
 
     obv = (np.sign(close.diff()) * df['volume']).fillna(0).cumsum()
@@ -275,7 +272,6 @@ def build_dataset(df, feats, lookback):
 
 
 def _z_vs_half(acc, n_obs):
-    """z-score van een hit-rate tegen 50%, met n_obs gecorrigeerd voor label-overlap."""
     n_eff = n_obs / float(LABEL_HORIZON)
     if acc is None or n_eff <= 0:
         return None
@@ -283,8 +279,6 @@ def _z_vs_half(acc, n_obs):
 
 
 def walk_forward_eval(X, y):
-    """Expanding walk-forward met embargo. Elke OOS-voorspelling komt uit een model dat getraind is
-    op data die minimaal EMBARGO candles vóór de testfold eindigt."""
     n = len(X)
     oos_n = int(n * OOS_FRACTION)
     fold = oos_n // WF_FOLDS
@@ -329,7 +323,6 @@ def walk_forward_eval(X, y):
     valid_p = ~np.isnan(p_all)
     clf_acc = float(np.mean((p_all[valid_p] > 0.5) == (y_all[valid_p] > 0))) if valid_p.any() else None
 
-    # Het signaal dat daadwerkelijk getraded wordt = regressor én classifier eens. Toets DAT signaal.
     long_m = (ens > 0) & (p_all >= 0.52)
     short_m = (ens < 0) & (p_all <= 0.48)
     sel = long_m | short_m
@@ -431,7 +424,6 @@ def process(df_raw, state, now, symbol, tf_info):
     clf_up = prob_up >= 52.0
     clf_down = prob_up <= 48.0
 
-    # Edge = het getrade signaal (regressor+classifier eens) is OOS significant beter dan 50%
     joint_z = res['joint_z']
     has_edge = (
         res['skill'] < 1.0
@@ -514,7 +506,13 @@ def main():
                 state = load_or_init_state(state_file)
                 if now - state.get('last_trained_timestamp', 0) < tf_info['min_interval_seconds']:
                     continue
-                df_raw = fetch_data_safely(symbol, tf_info)
+                
+                # Utilisation du cache partagé pour l'intervalle 1d, fetch classique pour 4h
+                if tf_name == '1d':
+                    df_raw = fetch_cached_1d_shared(exchange, symbol, asset, total_bars=tf_info['limit'])
+                else:
+                    df_raw = fetch_data_safely(symbol, tf_info)
+
                 if df_raw.empty:
                     continue
                 state, ok = process(df_raw, state, now, symbol, tf_info)
