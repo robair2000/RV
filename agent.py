@@ -88,9 +88,9 @@ def get_combined_trading_assets(top_n=5):
 
 TIMEFRAMES = {'4h': '4h', '1d': '1d'}
 CHECK_INTERVAL_SECONDS = 1800
-EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
-exchange = getattr(ccxt, EXCHANGE_ID)({'enableRateLimit': True})
+# GEBRUIK NU STRICT KUCOIN FUTURES VOOR SWAP SYMBOLEN
+exchange = ccxt.kucoinfutures({'enableRateLimit': True})
 
 
 def fetch_historical_candles(symbol, timeframe, limit=250):
