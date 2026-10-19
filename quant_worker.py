@@ -89,7 +89,7 @@ timeframes = {
     '1d': {'interval': '1d', 'limit': 400, 'min_interval_seconds': 23 * 3600},
 }
 
-# Orthogonale, stationaire features voor de Quant Worker (onafhankelijk van Agent S&R)
+# Orthogonale, stationaire features voor de Quant Worker
 base_features = [
     'return_1', 'RSI', 'atr_ratio', 'bb_position', 'MACD_hist', 
     'OBV_slope', 'VWAP_dist', 'funding_rate', 'orderbook_imbalance'
@@ -189,7 +189,6 @@ def load_or_init_state(state_file):
             with open(state_file, 'r', encoding='utf-8') as f:
                 loaded = json.load(f)
             
-            # Controleer de versie: als de opgeslagen state verouderd is, negeer hem en forceer defaults!
             if isinstance(loaded, dict) and loaded.get('state_version', 1) == STATE_VERSION:
                 state.update(loaded)
             else:
@@ -313,7 +312,6 @@ def build_dataset(df, feats, lookback):
     d = df.dropna(subset=feats + ['close', 'ATR']).reset_index(drop=True)
     if len(d) < lookback + 10:
         return None
-    # Snijd de laatste 3 rijen af omdat shift(-3) daar NaN oplevert
     X = d[feats].iloc[:-3]
     y = (d['close'].shift(-3) / d['close'] - 1.0).iloc[:-3]
     X = X.iloc[-lookback:]
@@ -382,9 +380,16 @@ def score_config(df, cfg):
 
 
 def _insufficient(state, now):
-    state.update({'data_status': 'insufficient_data', 'signal': 'none', 'signal_probability': 50.0,
-                  'last_prediction': None, 'last_prediction_price': None,
-                  'last_trained_timestamp': now, 'updated_at': int(now)})
+    state.update({
+        'data_status': 'insufficient_data', 
+        'signal': 'none', 
+        'signal_probability': 50.0,
+        'last_prediction': None, 
+        'last_prediction_price': None,
+        'last_trained_timestamp': now, 
+        'last_candle_ts': 0,
+        'updated_at': int(now)
+    })
     return state
 
 
@@ -441,12 +446,12 @@ def process(df_raw, state, now, symbol):
     last_close = float(df['close'].iloc[-1])
     atr = df['ATR'].iloc[-1]
     atr = float(atr) if pd.notna(atr) and atr > 0 else last_close * 0.02
+    last_candle_timestamp = int(df['timestamp'].iloc[-1]) if not df.empty else 0
 
     reg_up = ens_ret > 0
-    clf_up = prob_up >= 52.0 # Strikte drempel
+    clf_up = prob_up >= 52.0
     clf_down = prob_up <= 48.0
 
-    # GEBRUIK HIER DE HARDE PERFORMANCE GATE: Alleen signaal bij echte out-of-sample edge
     has_edge = chosen_res['dir_acc'] >= 0.52 and chosen_res['skill'] < 0.98
 
     if has_edge and reg_up and clf_up:
@@ -478,6 +483,7 @@ def process(df_raw, state, now, symbol):
         'take_profit': (last_close + sign * TP_ATR_MULT * atr) if signal != 'none' else 0.0,
         'data_status': 'ok',
         'last_trained_timestamp': now,
+        'last_candle_ts': last_candle_timestamp,
         'updated_at': int(now),
     })
     return state, True
