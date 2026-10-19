@@ -332,10 +332,12 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
         twm_signal = 'long'
         twm_score = 80.0
 
-    if signal != 'none':
+   if signal != 'none':
         meta_prob, val_auc = train_meta_classifier(df_4h, direction=signal)
+        print(f"🔍 {asset} - Meta Prob: {meta_prob:.4f} | Val AUC: {val_auc:.4f}")
         
-        if val_auc < 0.55:
+        # Versoepelde gate i.p.v. harde ruis-blokkade
+        if val_auc < 0.51 or meta_prob < 0.45:
             signal = 'none'
             score = 50.0
         else:
