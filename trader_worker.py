@@ -108,7 +108,6 @@ COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 7200))
 
 DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
-EXCHANGE_ID = os.environ.get('EXCHANGE_ID', 'kucoin')
 
 MAX_CONCURRENT_POSITIONS = 2
 MIN_RRR = 3.0
@@ -118,12 +117,12 @@ MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 active_trades = {}
 symbol_cooldowns = {}
 
-exchange = getattr(ccxt, EXCHANGE_ID)({
+# GEBRUIK NU STRICT KUCOIN FUTURES VOOR CORRECTE SWAP ENDPOINTS
+exchange = ccxt.kucoinfutures({
     'apiKey': os.getenv('KUCOIN_API_KEY', ''),
     'secret': os.getenv('KUCOIN_API_SECRET', ''),
     'password': os.getenv('KUCOIN_API_PASSWORD', ''),
     'enableRateLimit': True,
-    'options': {'defaultType': 'swap'},
 })
 
 
@@ -433,7 +432,7 @@ def execute_live_trades_scan(symbols):
         positions = execute_with_retry(lambda: exchange.fetch_positions())
         open_orders = execute_with_retry(lambda: exchange.fetch_open_orders())
     except Exception as e:
-        print(f"⚠️ Fout bij ophalen posities/orders van KuCoin: {e}")
+        print(f"⚠️ Fout bij ophalen posities/orders van KuCoin Futures: {e}")
         return
 
     active_symbols = set()
