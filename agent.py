@@ -143,7 +143,6 @@ def compute_smart_indicators(df):
     lower_bb = sma20 - (std20 * 2.0)
     bb_width = (upper_bb - lower_bb) / (sma20 + 1e-8)
     
-    # KRITISCHE FIX: Squeeze berekening EXCLUSIEF de huidige bar om valse triggers te voorkomen
     prior_min_bb_width = bb_width.iloc[-21:-1].min()
     is_bb_squeeze = bool(bb_width.iloc[-1] <= prior_min_bb_width * 1.1)
 
@@ -217,7 +216,6 @@ def detect_support_resistance_and_sd(df):
 def train_meta_classifier(df, direction='long'):
     df = df.copy()
     
-    # KRITISCHE FIX: Snijd de laatste 3 rijen af i.v.m. shift(-3) om NaN targets te voorkomen
     df['returns'] = df['close'].pct_change(3).shift(-3)
     
     if direction == 'long':
@@ -284,7 +282,8 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
             'recommended_trailing_mult': 2.5, 
             'min_score_required': MIN_BOSS_SCORE,
             'strictness_mode': 'trend_continuation_pullback',
-            'confidence': 0.0
+            'confidence': 0.0,
+            'last_candle_ts': 0
         }
 
     ind_4h = compute_smart_indicators(df_4h)
@@ -322,9 +321,7 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
         signal = 'short'
         score = 85.0
 
-   if signal != 'none':
-        # KRITISCH: Geef hier expliciet de richting mee ('long' of 'short') zodat de 
-        # meta-classifier onafhankelijk traint op de specifieke directionele target!
+    if signal != 'none':
         meta_prob = train_meta_classifier(df_4h, direction=signal)
         score += (meta_prob * 15.0)
         
@@ -337,6 +334,9 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
 
     leverage = 3 if score >= 90.0 else 2
     trailing_mult = 2.5
+    
+    # Haal de exacte timestamp van de laatst afgesloten 4h candle op voor de re-entry lock
+    last_candle_timestamp = int(df_4h['timestamp'].iloc[-1]) if not df_4h.empty else 0
 
     return {
         'pattern_score': float(score),
@@ -350,6 +350,7 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
         'volume_expansion_ratio': ind_4h['volume_expansion_ratio'],
         'is_volume_expansion': ind_4h['is_volume_expansion'],
         'is_bollinger_squeeze': ind_4h['is_bollinger_squeeze'],
+        'last_candle_ts': last_candle_timestamp,
         'updated_at': time.time()
     }
 
