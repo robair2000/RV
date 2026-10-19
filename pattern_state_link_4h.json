@@ -4,8 +4,11 @@
   "recommended_leverage": 2,
   "recommended_trailing_mult": 2.5,
   "min_score_required": 75.0,
-  "strictness_mode": "v20_sr_sd_confluence",
+  "strictness_mode": "explosive_reversal_hunter",
   "atr_pct": 1.51,
   "adx_4h": 79.25,
-  "updated_at": 1792395345.00147
+  "volume_expansion_ratio": 0.8,
+  "is_volume_expansion": false,
+  "is_bollinger_squeeze": true,
+  "updated_at": 1792395418.772123
 }
