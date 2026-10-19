@@ -113,11 +113,10 @@ exchange = ccxt.kucoinfutures({'enableRateLimit': True})
 
 def fetch_historical_candles(symbol, timeframe, limit=250):
     try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        if not ohlcv or len(ohlcv) < 5:
+        # Gebruik fetch_ohlcv_paginated zodat we gegarandeerd de meest recente candles tot nu ophalen
+        df = fetch_ohlcv_paginated(exchange, symbol, timeframe, total_bars=limit)
+        if df.empty or len(df) < 5:
             return pd.DataFrame()
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df = df.iloc[:-1].reset_index(drop=True)  # laatste (lopende) candle weg
         return df
     except Exception as e:
         print(f"⚠️ Fout bij ophalen candles voor {symbol} ({timeframe}): {e}")
