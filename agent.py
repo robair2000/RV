@@ -153,7 +153,6 @@ def compute_smart_indicators(df):
     vol_expansion_ratio = float(current_vol / avg_vol)
     is_vol_expansion = vol_expansion_ratio > 1.35
 
-    # RSI Berekening voor TWM Reversal logica
     delta = close.diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -286,9 +285,15 @@ def train_meta_classifier(df, direction='long'):
 def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
     if df_4h is None or len(df_4h) < 60 or df_1d is None or len(df_1d) < 60:
         return {
-            'pattern_score': 50.0, 'pattern_signal': 'none', 'recommended_leverage': 1, 
-            'recommended_trailing_mult': 2.5, 'min_score_required': MIN_BOSS_SCORE,
-            'strictness_mode': 'trend_pullback', 'last_candle_ts': 0
+            'pattern_score': 50.0, 
+            'pattern_signal': 'none', 
+            'twm_signal': 'none', 
+            'twm_score': 50.0,
+            'recommended_leverage': 1, 
+            'recommended_trailing_mult': 2.5, 
+            'min_score_required': MIN_BOSS_SCORE,
+            'strictness_mode': 'trend_pullback', 
+            'last_candle_ts': 0
         }
 
     ind_4h = compute_smart_indicators(df_4h)
@@ -302,7 +307,6 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
     close_to_support = (ind_4h['close'] - sr_sd['nearest_support']) <= (2.0 * ind_4h['atr'])
     close_to_resistance = (sr_sd['nearest_resistance'] - ind_4h['close']) <= (2.0 * ind_4h['atr'])
 
-    # V20 Trend Pullback Logica
     is_long_setup = (
         has_trend and ind_4h['macd_hist'] > 0 and
         ind_4h['close'] >= ind_4h['ema9'] * 0.992 and ind_4h['close'] <= ind_4h['ema9'] * 1.015 and
@@ -319,20 +323,18 @@ def analyze_advanced_patterns(df_4h, df_1d, asset='BTC'):
     elif is_short_setup and not is_long_setup:
         signal = 'short'
 
-    # TWM Reversal Logica (Orthogonaal: koers breekt uit Bollinger bands met RSI overbought/oversold)
     twm_signal = 'none'
     twm_score = 50.0
     if ind_4h['pct_b'] > 1.02 and ind_4h['rsi'] > 75.0 and ind_4h['volume_expansion_ratio'] > 1.4:
-        twm_signal = 'short' # Uitputting van stijging -> Reversal short
+        twm_signal = 'short'
         twm_score = 80.0
     elif ind_4h['pct_b'] < -0.02 and ind_4h['rsi'] < 25.0 and ind_4h['volume_expansion_ratio'] > 1.4:
-        twm_signal = 'long'  # Uitputting van daling -> Reversal long
+        twm_signal = 'long'
         twm_score = 80.0
 
     if signal != 'none':
         meta_prob, val_auc = train_meta_classifier(df_4h, direction=signal)
         
-        # STATISTISCHE VALIDATIE GATE: model moet echte edge tonen (AUC > 0.55)
         if val_auc < 0.55:
             signal = 'none'
             score = 50.0
@@ -438,7 +440,9 @@ def run_final_boss_scan():
             analysis = analyze_advanced_patterns(df_4h, df_1d, asset=asset)
             pattern_filename = f'pattern_state_{asset.lower()}_4h.json'
             push_state_to_github(pattern_filename, analysis)
-            print(f"👑 {asset} Agent: V20={analysis['pattern_signal'].upper()} | TWM={analysis['twm_signal'].upper()} | Score={analysis['pattern_score']}")
+            print(f"👑 {asset} Agent: V20={analysis.get('pattern_signal', 'none').upper()} | TWM={analysis.get('twm_signal', 'none').upper()} | Score={analysis.get('pattern_score', 50.0)}")
+        else:
+            print(f"⚠️ Geen voldoende candles voor {asset}, overgeslagen.")
         time.sleep(5.0)
 
 
