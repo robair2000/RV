@@ -95,7 +95,8 @@ interval_code = interval_info['code']
 @st.cache_data(ttl=300)
 def load_dashboard_data(symbol, tf_info):
     try:
-        exchange_client = ccxt.kucoin({'enableRateLimit': True})
+        # GEBRUIK KUCOIN FUTURES VOOR CORRECTE SWAP/FUTURES DATA
+        exchange_client = ccxt.kucoinfutures({'enableRateLimit': True})
         ohlcv = exchange_client.fetch_ohlcv(symbol, timeframe=tf_info['interval'], limit=tf_info['limit'])
         if not ohlcv:
             return None
@@ -113,17 +114,17 @@ def load_dashboard_data(symbol, tf_info):
         
         return df.dropna()
     except Exception as e:
-        st.error(f"Fout bij ophalen KuCoin data: {e}")
+        st.error(f"Fout bij ophalen KuCoin Futures data: {e}")
         return None
 
 @st.cache_resource
 def get_exchange_client():
-    exch = ccxt.kucoin({
+    # GEBRUIK CORRECTE KUCOIN FUTURES CLASS IPV SPOT
+    exch = ccxt.kucoinfutures({
         'apiKey': os.getenv('KUCOIN_API_KEY', ''),
         'secret': os.getenv('KUCOIN_API_SECRET', ''),
         'password': os.getenv('KUCOIN_API_PASSWORD', ''),
         'enableRateLimit': True,
-        'options': {'defaultType': 'swap'},
     })
     try:
         exch.load_markets()
@@ -176,11 +177,11 @@ with tab1:
         else:
             st.info("ℹ️ Geen actieve openstaande posities gevonden op je KuCoin Futures account op dit moment.")
     except Exception as e:
-        st.warning(f"⚠️ Kon live posities niet ophalen van KuCoin: {e}")
+        st.warning(f"⚠️ Kon live posities niet ophalen van KuCoin Futures: {e}")
 
     st.markdown("---")
 
-    symbol = f"{asset_code}/USDT"
+    symbol = f"{asset_code}/USDT:USDT"  # Aangepast naar het correcte futures swap symbool formaat
     df = load_dashboard_data(symbol, interval_info)
 
     state_file = f"model_state_{asset_code.lower()}_{interval_code}.json"
@@ -218,7 +219,7 @@ with tab1:
                 st.info(f"⏸ **VETO (Score):** Signaal komt overeen, maar de score ({boss_score}) is te laag (vereist: {min_score_req}).")
 
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Huidige Koers (KuCoin, live)", f"${current_price:,.2f}")
+            col1.metric("Huidige Koers (KuCoin Futures, live)", f"${current_price:,.2f}")
             col2.metric(f"Voorspelling volgende {interval_code}-candle", f"${predicted_price:,.2f}",
                         delta=f"{pred_ret_pct:+.3f}% t.o.v. live koers", delta_color="normal")
             col3.metric("RSI (14)", f"{df['RSI'].iloc[-1]:.1f}")
@@ -260,7 +261,7 @@ with tab1:
                 df_weights = pd.DataFrame(list(weights.items()), columns=['Model', 'Gewicht'])
                 st.bar_chart(df_weights.set_index('Model'))
     else:
-        st.error("Kon geen marktdata ophalen via KuCoin.")
+        st.error("Kon geen marktdata ophalen via KuCoin Futures.")
 
 with tab2:
     st.markdown("### ⚙️ Systeem Status & Worker Logs (GitHub & Bot Sync)")
@@ -321,7 +322,6 @@ with tab3:
         if twm_active:
             st.success(f"🚀 **Actieve TWM Reversal Sniper Posities:** {len(twm_active)}")
             
-            # Converteer de active_trades dictionary naar een mooie overzichtstabel met SL en TP
             sniper_rows = []
             for sym, details in twm_active.items():
                 sniper_rows.append({
