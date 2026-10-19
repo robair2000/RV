@@ -181,10 +181,11 @@ def load_pattern_state(asset):
 
     updated_at = float(pst.get('updated_at', 0) or 0)
     raw_candle_ts = float(pst.get('last_candle_ts', 0) or 0)
+    candle_ts = _norm_ts(raw_candle_ts)  # <--- HIER DE FIX: netjes omzetten naar seconden!
     current_time = time.time()
 
-    if current_time - updated_at > MAX_STATE_AGE_SECONDS:
-        print(f"⚠️ TWM: Pattern state file voor {asset} is te oud (updated_at).")
+    if current_time - candle_ts > MAX_CANDLE_AGE_SECONDS:
+        print(f"⚠️ TWM Waarsuchwing: Pattern state voor {asset} heeft te oude candle.")
         return None
 
     if raw_candle_ts > 0:
