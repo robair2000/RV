@@ -1,0 +1,78 @@
+{
+    "learning_rate": 0.05,
+    "lookback_window": 120,
+    "current_regime": "trending",
+    "regime_features": {
+        "trending": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ],
+        "sideways": [
+            "return_1",
+            "dist_sma20",
+            "dist_sma50",
+            "RSI",
+            "atr_ratio",
+            "bb_position",
+            "ADX",
+            "MACD_hist",
+            "OBV_slope",
+            "VWAP_dist",
+            "dist_support",
+            "dist_resistance"
+        ]
+    },
+    "active_features": [
+        "return_1",
+        "dist_sma20",
+        "dist_sma50",
+        "RSI",
+        "atr_ratio",
+        "bb_position",
+        "ADX",
+        "MACD_hist",
+        "OBV_slope",
+        "VWAP_dist",
+        "dist_support",
+        "dist_resistance"
+    ],
+    "last_trained_timestamp": 1792386104.0506048,
+    "model_weights": {
+        "xgb": 0.3300015057401363,
+        "cat": 0.3567861118706217,
+        "rf": 0.3132123823892421
+    },
+    "model_errors": {
+        "xgb": null,
+        "cat": null,
+        "rf": null
+    },
+    "baseline_error": 1.378755191775355,
+    "last_prediction": 4.153840802530655e-06,
+    "last_prediction_price": 4.153840802530655e-06,
+    "predicted_return_pct": -0.20323372821145874,
+    "direction_probability": 58.52973556518555,
+    "signal": "none",
+    "signal_probability": 50.0,
+    "holdout_direction_accuracy": 0.43333333333333335,
+    "holdout_classifier_accuracy": null,
+    "holdout_samples": 0,
+    "atr": 1.781714285714285e-07,
+    "atr_pct": 4.280600354886205,
+    "last_close": 4.1623e-06,
+    "last_candle_ts": 0,
+    "data_status": "ok",
+    "stop_loss": 0.0,
+    "take_profit": 0.0,
+    "updated_at": 1792386104
+}
