@@ -6,9 +6,9 @@ import time
 import math
 
 # --- CONFIGURATIE ---
-EXCHANGE = ccxt.kucoin({
-    'enableRateLimit': True,
-    'options': {'defaultType': 'swap'}
+# GEBRUIK NU STRICT KUCOIN FUTURES VOOR SWAP MARKTEN EN CORRECTE ENDPOINTS
+EXCHANGE = ccxt.kucoinfutures({
+    'enableRateLimit': True
 })
 TIMEFRAME = '4h'
 MIN_DAILY_VOLUME_USDT = 20_000_000  # Minimum 20 miljoen USDT 24h volume voor liquiditeitsbescherming
