@@ -62,7 +62,7 @@ def push_file_to_github(filename):
     except Exception as e:
         print(f"❌ Push van {filename} mislukt: {e}")
 
-# --- STAP 1: DYNAMISCHE ASSET SELECTIE (Kern + Scanner Top 5) ---
+# --- STAP 1: DYNAMISCHE ASSET SELECTIE ---
 def get_combined_trading_symbols(top_n=5):
     core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
     ranking_file = 'kucoin_best_coins_ranking.csv'
@@ -85,27 +85,26 @@ def get_combined_trading_symbols(top_n=5):
     return combined
 
 timeframes = {
-    '4h': {'interval': '4h', 'limit': 500, 'min_interval_seconds': 3 * 3600},
-    '1d': {'interval': '1d', 'limit': 365, 'min_interval_seconds': 23 * 3600},
+    '4h': {'interval': '4h', 'limit': 600, 'min_interval_seconds': 3 * 3600},
+    '1d': {'interval': '1d', 'limit': 400, 'min_interval_seconds': 23 * 3600},
 }
 
+# Orthogonale, stationaire features voor de Quant Worker (onafhankelijk van Agent S&R)
 base_features = [
-    'return_1', 'dist_sma20', 'dist_sma50', 'RSI', 'atr_ratio', 
-    'bb_position', 'ADX', 'MACD_hist', 'OBV_slope', 'VWAP_dist',
-    'dist_support', 'dist_resistance'
+    'return_1', 'RSI', 'atr_ratio', 'bb_position', 'MACD_hist', 
+    'OBV_slope', 'VWAP_dist', 'funding_rate', 'orderbook_imbalance'
 ]
 
 MODEL_NAMES = ['xgb', 'cat', 'rf']
 
 HOLDOUT_FRACTION = 0.25
-MIN_HOLDOUT = 15
-MIN_TRAIN_ROWS = 25
-MIN_FEATURE_ROWS = 60
+MIN_HOLDOUT = 30
+MIN_TRAIN_ROWS = 60
+MIN_FEATURE_ROWS = 100
 
 SL_ATR_MULT = 2.5
 TP_ATR_MULT = 5.0
 
-# GEBRUIK NU STRICT KUCOIN FUTURES VOOR CORRECTE SWAP ENDPOINTS
 exchange = ccxt.kucoinfutures({
     'enableRateLimit': True,
 })
@@ -118,8 +117,7 @@ def safe_div(num, den):
 
 def fetch_market_context_from_exchange(exch, symbol):
     funding = 0.0
-    oi_data = None
-    orderbook = None
+    orderbook_imbalance = 0.0
     swap_symbol = f"{symbol}:USDT" if not symbol.endswith(":USDT") else symbol
 
     try:
@@ -128,35 +126,30 @@ def fetch_market_context_from_exchange(exch, symbol):
             funding = float(fr['fundingRate'])
     except Exception:
         try:
-            time.sleep(0.5)
+            time.sleep(0.3)
             fr = exch.fetch_funding_rate(symbol)
             if fr and 'fundingRate' in fr:
                 funding = float(fr['fundingRate'])
         except Exception:
             pass
 
-    time.sleep(0.5)
-    try:
-        oi = exch.fetch_open_interest(swap_symbol)
-        if oi and 'openInterest' in oi:
-            val = float(oi['openInterest'])
-            oi_data = {'change': [val]*500, 'ratio': [1.0]*500}
-    except Exception:
-        pass
-
-    time.sleep(0.5)
+    time.sleep(0.3)
     try:
         orderbook = exch.fetch_order_book(symbol, limit=20)
+        if orderbook and 'bids' in orderbook and 'asks' in orderbook:
+            bids_vol = sum([b[1] for b in orderbook['bids'][:10]])
+            asks_vol = sum([a[1] for a in orderbook['asks'][:10]])
+            orderbook_imbalance = (bids_vol - asks_vol) / (bids_vol + asks_vol + 1e-8)
     except Exception:
         pass
 
-    return funding, oi_data, orderbook
+    return funding, orderbook_imbalance
 
 
 def default_state():
     return {
-        'learning_rate': 0.05,
-        'lookback_window': 120,
+        'learning_rate': 0.03,
+        'lookback_window': 350,
         'current_regime': 'trending',
         'regime_features': {
             'trending': base_features.copy(),
@@ -225,28 +218,25 @@ def save_state(state_file, state):
 def fetch_data_safely(symbol, tf_info):
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf_info['interval'], limit=tf_info['limit'])
-        if not ohlcv:
+        if not ohlcv or len(ohlcv) < 5:
             return pd.DataFrame()
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['Date'] = pd.to_datetime(df['timestamp'], unit='ms')
-        return df.reset_index(drop=True)
+        # KRITISCH: Verwijder altijd de incomplete lopende bar om repainting te voorkomen
+        df = df.iloc[:-1].reset_index(drop=True)
+        return df
     except Exception as e:
         print(f"❌ KuCoin Futures fetch fout voor {symbol}: {e}")
         return pd.DataFrame()
 
 
-def compute_features(df):
+def compute_features(df, funding=0.0, ob_imbalance=0.0):
     df = df.copy()
     close = df['close']
     high = df['high']
     low = df['low']
 
-    df['SMA_20'] = close.rolling(window=20).mean()
-    df['SMA_50'] = close.rolling(window=50).mean()
-
+    sma20 = close.rolling(window=20).mean()
     df['return_1'] = close.pct_change()
-    df['dist_sma20'] = (close - df['SMA_20']) / (df['SMA_20'] + 1e-8)
-    df['dist_sma50'] = (close - df['SMA_50']) / (df['SMA_50'] + 1e-8)
 
     delta = close.diff()
     gain = delta.where(delta > 0, 0.0)
@@ -258,23 +248,13 @@ def compute_features(df):
     high_close = np.abs(high - close.shift())
     low_close = np.abs(low - close.shift())
     true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df['ATR'] = true_range.rolling(window=14).mean()
-    df['atr_ratio'] = df['ATR'] / (close + 1e-8)
+    atr = true_range.rolling(window=14).mean()
+    df['atr_ratio'] = (atr / (close + 1e-8)) * 100.0
 
     bb_std = close.rolling(window=20).std()
-    bb_upper = df['SMA_20'] + (bb_std * 2.0)
-    bb_lower = df['SMA_20'] - (bb_std * 2.0)
+    bb_upper = sma20 + (bb_std * 2.0)
+    bb_lower = sma20 - (bb_std * 2.0)
     df['bb_position'] = (close - bb_lower) / ((bb_upper - bb_lower) + 1e-8)
-
-    up_move = high.diff()
-    down_move = -low.diff()
-    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-    tr14 = true_range.rolling(window=14).sum()
-    plus_di = 100 * pd.Series(plus_dm).rolling(window=14).sum() / (tr14 + 1e-8)
-    minus_di = 100 * pd.Series(minus_dm).rolling(window=14).sum() / (tr14 + 1e-8)
-    dx = 100 * (plus_di - minus_di).abs() / ((plus_di + minus_di) + 1e-8)
-    df['ADX'] = dx.rolling(window=14).mean()
 
     ema_12 = close.ewm(span=12, adjust=False).mean()
     ema_26 = close.ewm(span=26, adjust=False).mean()
@@ -282,37 +262,24 @@ def compute_features(df):
     macd_signal = macd_line.ewm(span=9, adjust=False).mean()
     df['MACD_hist'] = macd_line - macd_signal
 
-    df['OBV'] = (np.sign(close.diff()) * df['volume']).fillna(0).cumsum()
-    df['OBV_slope'] = df['OBV'].diff() / (df['volume'].rolling(20).mean() + 1e-8)
+    obv = (np.sign(close.diff()) * df['volume']).fillna(0).cumsum()
+    df['OBV_slope'] = obv.diff(3) / (df['volume'].rolling(20).mean() + 1e-8)
 
     typical_price = (high + low + close) / 3
     vwap = (typical_price * df['volume']).rolling(20).sum() / (df['volume'].rolling(20).sum() + 1e-8)
     df['VWAP_dist'] = (close - vwap) / (vwap + 1e-8)
 
-    rolling_min = low.rolling(window=50, min_periods=10).min()
-    rolling_max = high.rolling(window=50, min_periods=10).max()
-    df['dist_support'] = (close - rolling_min) / (df['ATR'] + 1e-8)
-    df['dist_resistance'] = (rolling_max - close) / (df['ATR'] + 1e-8)
+    df['funding_rate'] = float(funding)
+    df['orderbook_imbalance'] = float(ob_imbalance)
+    df['ATR'] = atr
 
     return df.replace([np.inf, -np.inf], np.nan)
 
 
-def enrich_market_context(df, funding=None, oi=None, orderbook=None):
-    out = df.copy()
-    out['funding_rate'] = pd.Series(funding, index=out.index) if funding is not None else 0.0
-    out['oi_change'] = 0.0
-    out['oi_ratio'] = 0.0
-    out['bid_ask_imbalance'] = 0.0
-    out['book_pressure'] = 0.0
-    out['taker_buy_ratio'] = 0.0
-    out['btc_trend_gap'] = 0.0
-    return out
-
-
 def get_market_regime(df):
     try:
-        if 'ADX' in df.columns and not pd.isna(df['ADX'].iloc[-1]):
-            return 'trending' if df['ADX'].iloc[-1] > 16 else 'sideways'
+        if 'atr_ratio' in df.columns and not pd.isna(df['atr_ratio'].iloc[-1]):
+            return 'trending' if df['atr_ratio'].iloc[-1] > 1.5 else 'sideways'
     except Exception:
         pass
     return 'trending'
@@ -320,14 +287,14 @@ def get_market_regime(df):
 
 def make_regressors(lr):
     return {
-        'xgb': xgb.XGBRegressor(learning_rate=lr, max_depth=4, n_estimators=50, random_state=42, verbosity=0, n_jobs=1),
-        'cat': CatBoostRegressor(learning_rate=lr, depth=4, iterations=50, random_seed=42, verbose=0, thread_count=1),
-        'rf': RandomForestRegressor(n_estimators=30, max_depth=4, random_state=42, n_jobs=1),
+        'xgb': xgb.XGBRegressor(learning_rate=lr, max_depth=3, n_estimators=40, random_state=42, verbosity=0, n_jobs=1),
+        'cat': CatBoostRegressor(learning_rate=lr, depth=3, iterations=40, random_seed=42, verbose=0, thread_count=1),
+        'rf': RandomForestRegressor(n_estimators=25, max_depth=3, random_state=42, n_jobs=1),
     }
 
 
 def make_classifier(lr):
-    return xgb.XGBClassifier(learning_rate=lr, n_estimators=30, max_depth=3, random_state=42,
+    return xgb.XGBClassifier(learning_rate=lr, n_estimators=25, max_depth=2, random_state=42,
                              eval_metric='logloss', verbosity=0, n_jobs=1)
 
 
@@ -336,11 +303,11 @@ def usable_features(df, feats):
 
 
 def build_dataset(df, feats, lookback):
-    d = df.dropna(subset=feats + ['close']).reset_index(drop=True)
+    d = df.dropna(subset=feats + ['close', 'ATR']).reset_index(drop=True)
     if len(d) < lookback + 5:
         return None
     X = d[feats].iloc[:-1]
-    y = (d['close'].shift(-1) / d['close'] - 1.0).iloc[:-1]
+    y = (d['close'].shift(-3) / d['close'] - 1.0).iloc[:-1] # 3-bar forward return voor robuustheid
     X = X.iloc[-lookback:]
     y = y.iloc[-lookback:]
     latest = d[feats].iloc[[-1]]
@@ -392,13 +359,6 @@ def evaluate_config(X, y, lr):
     }
 
 
-def mutate_config(cfg, regime):
-    new = copy.deepcopy(cfg)
-    new['learning_rate'] = float(np.clip(cfg['learning_rate'] + np.random.choice([-0.01, 0.01]), 0.01, 0.15))
-    new['lookback_window'] = int(np.clip(cfg['lookback_window'] + np.random.choice([-20, 20]), 60, 300))
-    return new
-
-
 def score_config(df, cfg):
     feats = usable_features(df, cfg['features'])
     if not feats:
@@ -421,13 +381,11 @@ def _insufficient(state, now):
 
 
 def process(df_raw, state, now, symbol):
-    df_raw = df_raw.iloc[:-1].reset_index(drop=True)
-    if len(df_raw) < 60:
+    if len(df_raw) < MIN_FEATURE_ROWS:
         return _insufficient(state, now), False
 
-    df = compute_features(df_raw)
-    funding, oi, ob = fetch_market_context_from_exchange(exchange, symbol)
-    df = enrich_market_context(df, funding=funding, oi=oi, orderbook=ob)
+    funding, ob_imbalance = fetch_market_context_from_exchange(exchange, symbol)
+    df = compute_features(df_raw, funding=funding, ob_imbalance=ob_imbalance)
 
     regime = get_market_regime(df)
     state['current_regime'] = regime
@@ -438,16 +396,11 @@ def process(df_raw, state, now, symbol):
         'features': list(state['regime_features'].get(regime, base_features)),
     }
     best_res = score_config(df, best_cfg)
-    cand_cfg = mutate_config(best_cfg, regime)
-    cand_res = score_config(df, cand_cfg)
 
-    chosen_cfg, chosen_res = best_cfg, best_res
-    if cand_res is not None and (best_res is None or cand_res['skill'] < best_res['skill']):
-        chosen_cfg, chosen_res = cand_cfg, cand_res
-
-    if chosen_res is None:
+    if best_res is None or best_res['skill'] >= 1.0 or best_res['dir_acc'] < 0.50:
         return _insufficient(state, now), False
 
+    chosen_cfg, chosen_res = best_cfg, best_res
     feats = chosen_res['features_used']
     ds = build_dataset(df, feats, chosen_cfg['lookback_window'])
     if ds is None:
@@ -482,13 +435,15 @@ def process(df_raw, state, now, symbol):
     atr = float(atr) if pd.notna(atr) and atr > 0 else last_close * 0.02
 
     reg_up = ens_ret > 0
-    clf_up = prob_up >= 50.0
-    
-    adx_val = df['ADX'].iloc[-1] if 'ADX' in df.columns and not pd.isna(df['ADX'].iloc[-1]) else 20.0
-    
-    if adx_val >= 16.0 and reg_up and clf_up:
+    clf_up = prob_up >= 52.0 # Strikte drempel
+    clf_down = prob_up <= 48.0
+
+    # GEBRUIK HIER DE HARDE PERFORMANCE GATE: Alleen signaal bij echte out-of-sample edge
+    has_edge = chosen_res['dir_acc'] >= 0.52 and chosen_res['skill'] < 0.98
+
+    if has_edge and reg_up and clf_up:
         signal, sig_prob = 'long', prob_up
-    elif adx_val >= 16.0 and (not reg_up) and (not clf_up):
+    elif has_edge and (not reg_up) and clf_down:
         signal, sig_prob = 'short', 100.0 - prob_up
     else:
         signal, sig_prob = 'none', 50.0
@@ -555,7 +510,6 @@ def push_to_github(files):
 
 
 def main():
-    # 1. Voer eerst automatisch de marktscanner uit
     try:
         print("🔄 Start automatische marktscan via getcoins.py...")
         subprocess.run(["python", "getcoins.py"], check=True)
@@ -564,7 +518,6 @@ def main():
     except Exception as e:
         print(f"⚠️ Kon getcoins.py niet uitvoeren of pushen: {e}. We gebruiken de bestaande CSV indien aanwezig.")
 
-    # 2. Haal de actieve symbolen op uit de verse ranking
     symbols_scope = get_combined_trading_symbols(top_n=5)
 
     written = []
@@ -585,11 +538,11 @@ def main():
                 save_state(state_file, state)
                 written.append(state_file)
                 gc.collect()
-                time.sleep(4.0)
+                time.sleep(3.0)
             except Exception as e:
                 print(f"❌ Fout bij {asset} ({tf_name}): {e}")
                 gc.collect()
-                time.sleep(4.0)
+                time.sleep(3.0)
     push_to_github(written)
 
 
