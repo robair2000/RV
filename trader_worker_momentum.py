@@ -104,7 +104,9 @@ TRAILING_SL_MULT = 2.0
 TWM_MIN_TP_ATR = float(os.environ.get('TWM_MIN_TP_ATR', 1.0))
 TWM_MIN_RRR = float(os.environ.get('TWM_MIN_RRR', 1.0))
 MAX_STATE_AGE_SECONDS = 8 * 3600
-MAX_CANDLE_AGE_SECONDS = 12.5 * 3600  # 4h bar + 4h buffer + marge
+# last_candle_ts = OPEN-tijd van de laatst gesloten 4h-candle, dus een vers signaal is al ~4h oud.
+# 5.5u = 4h + agent-scaninterval (30 min) + pull-interval + marge; ouder = signaal van 2 candles terug.
+MAX_CANDLE_AGE_SECONDS = float(os.environ.get('MAX_CANDLE_AGE_HOURS', 5.5)) * 3600
 
 active_trades = {}
 symbol_cooldowns = {}
@@ -184,19 +186,21 @@ def load_pattern_state(asset):
         return None
 
     updated_at = float(pst.get('updated_at', 0) or 0)
-    raw_candle_ts = float(pst.get('last_candle_ts', 0) or 0)
-    candle_ts = _norm_ts(raw_candle_ts)  # <--- HIER DE FIX: netjes omzetten naar seconden!
+    candle_ts = _norm_ts(pst.get('last_candle_ts', 0))
     current_time = time.time()
 
-    if current_time - candle_ts > MAX_CANDLE_AGE_SECONDS:
-        print(f"⚠️ TWM Waarsuchwing: Pattern state voor {asset} heeft te oude candle.")
+    # Een ontbrekende/0 candle-timestamp telt als verouderd (anders zou een kapotte state altijd door de check glippen)
+    if candle_ts <= 0:
+        print(f"⚠️ TWM: pattern state voor {asset} heeft geen geldige last_candle_ts.")
         return None
 
-    if raw_candle_ts > 0:
-        candle_age_seconds = current_time - _norm_ts(raw_candle_ts)
-        if candle_age_seconds > MAX_CANDLE_AGE_SECONDS:
-            print(f"⚠️ TWM Waarschuwing: Pattern state voor {asset} heeft te oude candle ({int(candle_age_seconds / 3600)} uur oud).")
-            return None
+    if current_time - updated_at > MAX_STATE_AGE_SECONDS:
+        return None
+
+    candle_age_seconds = current_time - candle_ts
+    if candle_age_seconds > MAX_CANDLE_AGE_SECONDS:
+        print(f"⚠️ TWM: pattern state voor {asset} heeft te oude candle ({candle_age_seconds / 3600:.1f} uur oud).")
+        return None
 
     return pst
 
@@ -481,8 +485,7 @@ def evaluate_and_trade_reversal(asset, symbol):
     take_profit_val = float(sma20)
     leverage = 2
 
-    if not ensure_margin_and_leverage(symbol, leverage):
-        return
+    # Eerst sizing, dan pas margin/leverage aanpassen (geen wijzigingen op symbolen die we toch overslaan)
     amount = compute_contract_amount(symbol, price, leverage)
     if amount is None:
         return
@@ -490,6 +493,9 @@ def evaluate_and_trade_reversal(asset, symbol):
     side = 'buy' if is_long else 'sell'
     if DRY_RUN:
         print(f"🧪 [DRY RUN TWM] Zou order plaatsen: {side} {amount}x {symbol} | SL {stop_loss_val:.4f} | TP(SMA20) {take_profit_val:.4f}")
+        return
+
+    if not ensure_margin_and_leverage(symbol, leverage):
         return
 
     try:
