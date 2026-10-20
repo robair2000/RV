@@ -1,17 +1,45 @@
 import os
+
+# --- OUTPUT & WARNING SUPPRESSION ---
+os.environ["PYTHONWARNINGS"] = "ignore"
+
 import json
 import time
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import ccxt
 import pandas as pd
 import numpy as np
+
 from github_utils import github_put
 from market_utils import fetch_ohlcv_paginated
 
+# --- RENDER WEB SERVER (NODIG VOOR UPTIMEROBOT) ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK - Markov 4h Worker is running")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Onderdrukt log-ruis van UptimeRobot pings
+
+def run_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    print(f"🌐 Markov Web service health check server gestart op poort {port}")
+    server.serve_forever()
+
+
+# --- MARKOV WORKER LOGICA ---
 EXCHANGE = ccxt.kucoinfutures({'enableRateLimit': True})
 
 def fetch_4h_candles(symbol, limit=1000):
     try:
-        # Haalt 4h candles op via de gedeelde paginated helper
         df = fetch_ohlcv_paginated(EXCHANGE, symbol, '4h', total_bars=limit)
         if df.empty or len(df) < 100:
             return pd.DataFrame()
@@ -92,6 +120,13 @@ def run_4h_markov_scan():
         time.sleep(2.0)
 
 if __name__ == '__main__':
+    # Start de HTTP-server in een achtergrond-thread zodat Render denkt dat dit een web service is
+    threading.Thread(target=run_server, daemon=True).start()
+    print("🚀 4h Markov Worker + Web Service gestart.")
+
     while True:
-        run_4h_markov_scan()
-        time.sleep(3600)  # Elk uur verversen voor actuele 4h stand
+        try:
+            run_4h_markov_scan()
+        except Exception as e:
+            print(f"⚠️ Fout in Markov scan lus: {e}")
+        time.sleep(3600)  # Elk uur herberekenen en pushen naar GitHub
