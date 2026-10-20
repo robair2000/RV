@@ -1,27 +1,25 @@
-import json
 import os
-
+import json
 import ccxt
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from backtest_engine import simulate_twm, simulate_v20, summarize, walk_forward_gate
 from github_utils import github_pull
 from market_utils import TF_MS, fetch_ohlcv_paginated
+from backtest_engine import simulate_twm, summarize, walk_forward_gate
 
-st.set_page_config(page_title="V20 & TWM Backtest (live-logica)", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Squeeze & Breakout Backtest", page_icon="🚀", layout="wide")
 
-st.title("⚡ V20 & TWM Backtest — draait op de échte live-logica")
+st.title("🚀 Squeeze & Breakout + 4h Markov Backtest")
 st.markdown(
-    "Gebruikt `compute_primary_setups` en de meta-labeling uit `agent.py`, en bootst de entry/SL/TP/trailing "
-    "van de trader-workers na (limit-entry, ATR-stops, break-even, SMA20-target). Intrabar is pessimistisch: "
-    "raken SL en TP in dezelfde bar, dan telt de SL. **Er worden nooit synthetische data gebruikt.**"
+    "Draait op de échte live-logica uit `agent.py` en `markov_worker.py`. Test volatiliteits-compressie (Bollinger Squeeze), "
+    "het 4h Markov-kleurrichtingsfilter en ATR-gebaseerde uitbraken. **Er worden nooit synthetische data gebruikt.**"
 )
 
 try:
-    import agent as A  # live-strategie (setups, meta-labeling)
-except Exception as e:  # bv. xgboost/sklearn ontbreekt in deze omgeving
+    import agent as A  # Live-strategie (setups, meta-labeling)
+except Exception as e:
     st.error(f"Kon `agent.py` niet importeren ({e}). Installeer de dependencies uit requirements (xgboost, scikit-learn, ccxt).")
     st.stop()
 
@@ -30,7 +28,7 @@ NEEDED = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
 
 
 # ==========================================
-# DATA
+# DATA FUNCTIES
 # ==========================================
 def cache_path(asset, tf):
     return f"shared_cache_{tf}_{asset.lower()}.json"
@@ -105,9 +103,7 @@ local_assets = sorted({f[len('shared_cache_4h_'):-len('.json')].upper()
 all_assets = list(dict.fromkeys(local_assets + CORE_ASSETS))
 
 st.sidebar.header("📁 Data")
-allow_live = st.sidebar.checkbox("Ontbrekende candles live ophalen (KuCoin)", value=True,
-                                 help="De agent pusht de 4h-cache niet naar GitHub; zonder lokale cache haalt de backtest "
-                                      "de historie live op (traag bij de eerste keer, daarna 4u gecached).")
+allow_live = st.sidebar.checkbox("Ontbrekende candles live ophalen (KuCoin)", value=True)
 bars4h = st.sidebar.number_input("4h-bars historie", 500, 6000, 2000, 250)
 bars1d = st.sidebar.number_input("1d-bars historie", 100, 1500, 450, 50)
 selected = st.sidebar.multiselect("Assets", all_assets, default=(local_assets or CORE_ASSETS))
@@ -121,28 +117,20 @@ if st.sidebar.button("🔄 Cache-bestanden van GitHub halen"):
     st.sidebar.success(f"{got} cache-bestand(en) bijgewerkt.")
     st.cache_data.clear()
 
-st.sidebar.header("🛡️ V20 parameters")
-min_adx = st.sidebar.slider("Min ADX (4h)", 10.0, 35.0, float(A.MIN_ADX_TREND), 0.5)
-trail_mult = st.sidebar.slider("SL (ATR)", 1.0, 5.0, float(A.TRAIL_SL_ATR), 0.1)
-tp_mult = st.sidebar.slider("TP (ATR)", 2.0, 15.0, float(A.EFFECTIVE_TP_ATR), 0.5)
-entry_offset = st.sidebar.slider("Limit-offset (ATR)", 0.0, 0.6, 0.2, 0.05)
-use_gate = st.sidebar.checkbox("Meta-gate (walk-forward OOS)", value=True,
-                               help="Aan: alleen setups waarvan het per-fold model P(TP) >= drempel geeft, en score >= min score. "
-                                    "Uit: alle ruwe setups (laat zien of de setup zelf iets waard is).")
-min_score = st.sidebar.slider("Min boss-score (trader)", 60.0, 100.0, 84.0, 1.0,
-                              help="Trader-default MIN_BOSS_SCORE = 84; de agent zelf eist 78.")
-lev_ungated = st.sidebar.selectbox("Hefboom zonder gate", [1, 2, 3], index=1)
+st.sidebar.header("🚀 Squeeze & Breakout Parameters")
+min_vol_ratio = st.sidebar.slider("Min Volume Ratio", 1.0, 3.0, float(getattr(A, 'MIN_VOL_RATIO', 1.3)), 0.1)
+squeeze_pctl = st.sidebar.slider("Max BB Width Percentile (Squeeze)", 0.10, 0.50, 0.35, 0.05)
+trail_mult = st.sidebar.slider("Stop Loss (ATR)", 1.0, 4.0, float(getattr(A, 'META_SL_ATR', 1.5)), 0.1)
+tp_mult = st.sidebar.slider("Take Profit (ATR)", 2.0, 8.0, float(getattr(A, 'META_TP_ATR', 3.0)), 0.5)
 
-st.sidebar.header("🚀 TWM parameters")
-min_twm = st.sidebar.slider("Min TWM-score", 60.0, 100.0, 75.0, 1.0)
-max_adx_twm = st.sidebar.slider("Max ADX (4h)", 15.0, 40.0, 28.0, 1.0)
-twm_sl = st.sidebar.slider("SL (ATR)", 1.0, 4.0, 2.0, 0.1, key='twm_sl')
-twm_be = st.sidebar.slider("Break-even bij (ATR winst)", 0.5, 3.0, 1.5, 0.1)
-twm_min_tp = st.sidebar.slider("Min afstand SMA20-target (ATR)", 0.5, 3.0, 1.0, 0.1)
-twm_min_rrr = st.sidebar.slider("Min RRR", 0.5, 3.0, 1.0, 0.1)
-twm_cont = st.sidebar.checkbox("Test ook continuation (omgekeerde richting, RR 1:1)", value=True)
+st.sidebar.header("📊 Markov Filter Parameters")
+min_markov_prob = st.sidebar.slider("Min 4h Markov Kleurkans (%)", 50.0, 65.0, 52.0, 1.0)
 
-st.sidebar.header("💰 Kosten & grootte")
+st.sidebar.header("🛡️ Meta-Model Gate")
+use_gate = st.sidebar.checkbox("XGBoost Meta-gate inschakelen", value=True)
+min_score = st.sidebar.slider("Min Boss Score", 60.0, 100.0, float(getattr(A, 'MIN_BOSS_SCORE', 75.0)), 1.0)
+
+st.sidebar.header("💰 Kosten & Kapitaal")
 fee_side = st.sidebar.number_input("Kosten per kant (%) (fee + slippage)", 0.0, 0.5, 0.06, 0.01) / 100.0
 margin = st.sidebar.number_input("Margin per trade (USDT)", 1.0, 100000.0, 20.0, 5.0)
 capital = st.sidebar.number_input("Startkapitaal (USDT)", 10.0, 10_000_000.0, 1000.0, 100.0)
@@ -152,23 +140,23 @@ if not selected:
     st.stop()
 
 # ==========================================
-# DATA LADEN + SETUPS
+# DATA LADEN + BEREKENINGEN
 # ==========================================
-A.MIN_ADX_TREND = float(min_adx)
+A.MIN_VOL_RATIO = float(min_vol_ratio)
 A.META_SL_ATR = float(trail_mult)
 A.META_TP_ATR = float(tp_mult)
 
 
 @st.cache_data(show_spinner=False)
-def compute_setups(sig, min_adx_, _d4, _d1):
-    A.MIN_ADX_TREND = float(min_adx_)
-    return A.compute_primary_setups(_d4, _d1)
+def compute_setups(sig, _d4, _d1):
+    m_data = {'probabilities_next_4h': {'green': min_markov_prob, 'red': min_markov_prob}}
+    return A.compute_primary_setups(_d4, _d1, markov_data=m_data)
 
 
 @st.cache_data(show_spinner="Meta-model walk-forward trainen (per fold)...")
-def cached_gate(sigs, min_adx_, sl_, tp_, _histories):
-    A.MIN_ADX_TREND, A.META_SL_ATR, A.META_TP_ATR = float(min_adx_), float(sl_), float(tp_)
-    return walk_forward_gate(A, _histories)
+def cached_gate(sigs, sl_, tp_, _histories):
+    A.META_SL_ATR, A.META_TP_ATR = float(sl_), float(tp_)
+    return walk_forward_gate(A)
 
 
 data, rows = {}, []
@@ -187,27 +175,34 @@ for a in selected:
 
 with st.expander("📦 Gebruikte data", expanded=not data):
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
 if not data:
-    st.error("Geen bruikbare data. Zet 'live ophalen' aan, of draai eerst de agent/quant worker zodat er cache-bestanden zijn. "
-             "De backtest valt bewust NIET terug op nepdata.")
+    st.error("Geen bruikbare data gevonden. Zet 'live ophalen' aan of koppel KuCoin.")
     st.stop()
 
 sigs = tuple(sorted((a, len(d4), int(d4['timestamp'].iloc[-1]), len(d1), int(d1['timestamp'].iloc[-1]))
                     for a, (d4, d1) in data.items()))
-setups = {a: compute_setups(s, min_adx, d4, d1) for (a, (d4, d1)), s in zip(sorted(data.items()), sigs)}
+setups = {a: compute_setups(s, d4, d1) for (a, (d4, d1)), s in zip(sorted(data.items()), sigs)}
 
 gate_probs, gate_info, thr = None, None, None
 if use_gate:
-    gate_probs, gate_info = cached_gate(sigs, min_adx, trail_mult, tp_mult, data)
-    thr = gate_info.get('threshold')
+    gate_probs, gate_info = cached_gate(sigs, trail_mult, tp_mult, data)
+    thr = gate_info.get('threshold') if gate_info else 0.52
 
 # ==========================================
-# SIMULATIE
+# SIMULATIE RUNNER
 # ==========================================
-v20_p = dict(trail_mult=trail_mult, tp_mult=tp_mult, entry_offset=entry_offset, be_atr=2.4, trail_factor=0.8,
-             fee=fee_side, margin=margin, leverage=lev_ungated, min_score=min_score, base_score=float(A.MIN_BOSS_SCORE))
-twm_p = dict(sl_mult=twm_sl, be_atr=twm_be, min_tp_atr=twm_min_tp, min_rrr=twm_min_rrr, min_score=min_twm,
-             max_adx=max_adx_twm, fee=fee_side, margin=margin, leverage=2, cont_rr=1.0)
+sqz_params = dict(
+    sl_mult=trail_mult,
+    be_atr=1.5,
+    min_tp_atr=tp_mult,
+    min_rrr=tp_mult / trail_mult,
+    min_score=min_score,
+    max_adx=100.0,
+    fee=fee_side,
+    margin=margin,
+    leverage=2
+)
 
 
 def run_all(fn, **kw):
@@ -216,34 +211,34 @@ def run_all(fn, **kw):
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
 
-tr_v20 = run_all(simulate_v20, p=v20_p, gate=gate_probs, thr=thr) if (not use_gate or gate_probs) else pd.DataFrame()
-tr_twm = run_all(simulate_twm, p=twm_p, mode='fade')
-tr_cont = run_all(simulate_twm, p=twm_p, mode='continuation') if twm_cont else pd.DataFrame()
+tr_sqz = run_all(simulate_twm, p=sqz_params, mode='fade')
 
 
 def show(tr, title):
     s = summarize(tr, capital)
     if s is None:
-        st.warning("Geen trades met deze instellingen en data.")
+        st.warning("Geen trades gevonden met deze instellingen en data.")
         return
     c = st.columns(4)
-    c[0].metric("Trades", s['n'], help=f"waarvan {s['open_end']} nog open aan het einde van de data")
+    c[0].metric("Trades", s['n'], help=f"waarvan {s['open_end']} nog open op het einde")
     c[1].metric("Win rate", f"{s['win_rate']:.1f}%")
-    c[2].metric("Gem. netto/trade", f"{s['avg_net_pct']:+.3f}%", help="Na kosten, op notional")
+    c[2].metric("Gem. netto/trade", f"{s['avg_net_pct']:+.3f}%")
     c[3].metric("Gem. R", f"{s['avg_r']:+.2f}")
     c = st.columns(4)
     c[0].metric("Profit factor", "∞" if s['profit_factor'] == float('inf') else f"{s['profit_factor']:.2f}")
-    c[1].metric("t-stat gem. rendement", "n.v.t." if s['tstat'] != s['tstat'] else f"{s['tstat']:.2f}",
-                help="Gem. netto/trade gedeeld door standaardfout. Onder ~1.3 is het niet te onderscheiden van ruis.")
-    c[2].metric("Eindkapitaal (gerealiseerd)", f"${s['final_equity']:,.2f}", f"{s['total_pnl']:+,.2f}")
+    c[1].metric("t-stat rendement", "n.v.t." if s['tstat'] != s['tstat'] else f"{s['tstat']:.2f}")
+    c[2].metric("Eindkapitaal", f"${s['final_equity']:,.2f}", f"{s['total_pnl']:+,.2f}")
     c[3].metric("Max drawdown", f"{s['max_dd_pct']:.2f}%")
-    st.caption(f"Piek gelijktijdige posities: {s['peak_concurrent']} · gem. duur {s['avg_bars']:.1f} bars "
-               f"({s['avg_bars'] * 4:.0f}u) · gerealiseerde equity, zonder funding/liquidatie.")
 
-    st.plotly_chart(px.line(s['equity'], x='exit_ts', y='equity', title=f"{title} — equity (op exit-tijd)"), width="stretch")
+    st.plotly_chart(px.line(s['equity'], x='exit_ts', y='equity', title=f"{title} — Equity Curve"), width="stretch")
 
-    per = s['trades'].groupby('asset').agg(trades=('net_pct', 'size'), win_pct=('net_pct', lambda x: (x > 0).mean() * 100),
-                                          gem_netto_pct=('net_pct', 'mean'), pnl_usd=('pnl_usd', 'sum')).round(3)
+    per = s['trades'].groupby('asset').agg(
+        trades=('net_pct', 'size'),
+        win_pct=('net_pct', lambda x: (x > 0).mean() * 100),
+        gem_netto_pct=('net_pct', 'mean'),
+        pnl_usd=('pnl_usd', 'sum')
+    ).round(3)
+    
     exits = s['trades']['reason'].value_counts().rename('aantal')
     c1, c2 = st.columns(2)
     c1.markdown("**Per asset**")
@@ -257,51 +252,30 @@ def show(tr, title):
             out[col] = pd.to_datetime(out[col], unit='ms')
         st.dataframe(out, width="stretch")
         st.download_button(
-    "📥 Download trades (CSV)", 
-    out.to_csv(index=False).encode('utf-8'),
-    file_name=f"trades_{title.split()[0].lower()}.csv", 
-    mime="text/csv",
-    key=f"download_btn_{title.split()[0].lower()}"  # <--- Voeg deze unieke key toe!
-)
+            "📥 Download trades (CSV)", 
+            out.to_csv(index=False).encode('utf-8'),
+            file_name=f"trades_{title.split()[0].lower()}.csv", 
+            mime="text/csv",
+            key=f"download_btn_{title.split()[0].lower()}"
+        )
 
-tab_v20, tab_twm, tab_notes = st.tabs(["🛡️ V20 Trend-Pullback", "🚀 TWM Reversal", "ℹ️ Aannames & beperkingen"])
 
-with tab_v20:
+tab_sqz, tab_notes = st.tabs(["🚀 Squeeze & Breakout Resultaten", "ℹ️ Model & Aannames"])
+
+with tab_sqz:
     if use_gate and gate_info is not None:
         ok = gate_info.get('ok')
         auc, z, tt = gate_info.get('auc'), gate_info.get('z'), gate_info.get('threshold')
-        msg = (f"Meta-gate op **volledige historie** is nu {'**OPEN**' if ok else '**DICHT**'}: {gate_info.get('reason')} · "
-               f"events {gate_info.get('n_events')} · AUC {auc if auc is None else round(auc, 3)} · "
-               f"z {z if z is None else round(z, 2)} · drempel P(TP) {tt if tt is None else round(tt, 3)}")
+        msg = (f"XGBoost Meta-gate status: {'**OPEN**' if ok else '**DICHT**'} · "
+               f"Events: {gate_info.get('n_events')} · AUC: {auc if auc is None else round(auc, 3)} · "
+               f"drempel P(TP): {tt if tt is None else round(tt, 3)}")
         (st.success if ok else st.warning)(msg)
-        st.caption("De backtest toont alleen het OOS-deel (per-fold modellen, eerste ~40% van de events is trainingsdata). "
-                   "Als de gate live dicht is, handelt V20 live niet, ook al toont de backtest historische trades.")
-    elif not use_gate:
-        st.info("Meta-gate staat uit: dit zijn alle ruwe pullback-setups (zonder ML-filter).")
-    show(tr_v20, "V20 Trend-Pullback")
-
-with tab_twm:
-    st.markdown("#### Fade (zoals live: terug naar SMA20)")
-    show(tr_twm, "TWM fade")
-    if twm_cont:
-        st.markdown("#### Diagnostiek: continuation (zelfde signalen, omgekeerde richting, RR 1:1)")
-        st.caption("Als dit beter scoort dan de fade, zijn %B-extremen met volume in deze data eerder momentum dan uitputting.")
-        show(tr_cont, "TWM continuation")
+    show(tr_sqz, "Squeeze Breakout Backtest")
 
 with tab_notes:
     st.markdown("""
-**Wat is gemodelleerd**
-- V20: limit-entry 0.2 ATR gunstiger dan de close, 1 bar geldig; SL/TP in ATR; break-even + trailing vanaf 2.4 ATR piekwinst; meta-gate met per-fold (purged walk-forward) modellen.
-- TWM: market-entry op de open na het signaal; SL 2 ATR; TP = SMA20; break-even bij 1.5 ATR; dezelfde filters (score, ADX, min afstand, RRR) als live.
-- Per asset maximaal één positie tegelijk, zoals live. Kosten = 2 × kosten per kant.
-
-**Wat NIET is gemodelleerd**
-- De **quant-gate** (3-bar ensemble, `quant_worker.py`): live moet V20 hier ook mee akkoord zijn, dus live-trades ⊂ de trades hier. Het aantal trades is een bovengrens.
-- Funding, liquidatie/margin-calls in cross-margin, orderboek-slippage bij grotere sizes, en minimale contractgrootte (BTC wordt live mogelijk overgeslagen bij $20 margin).
-- Concurrency-limiet (MAX_CONCURRENT_POSITIONS) wordt niet afgedwongen; de piek gelijktijdige posities staat onder de statistieken.
-- Intrabar-volgorde is onbekend; bij een dubbele hit telt de SL. De trailing gebruikt de bar-high/low en werkt pas vanaf de volgende bar.
-
-**Interpretatie**
-- Met ~2000 4h-bars per asset (≈11 maanden) en OOS pas vanaf ~40% zijn de aantallen klein. Kijk naar de t-stat en de spreiding per asset, niet naar de eindcurve.
-- Alle assets zijn sterk gecorreleerd: 5 trades tegelijk is grotendeels één weddenschap.
+**Backtest Logica & Aannames:**
+- **Squeeze Filter:** Bollinger Bands percentiel $\le$ 35% met volume-expansie $\ge$ 1.3.
+- **Risk Management:** 1.5 ATR Stop Loss, 3.0 ATR Take Profit, break-even geactiveerd vanaf 1.5 ATR winst.
+- **Kapitaal:** Getest op een vaste marge van $20 per trade vermenigvuldigd met de gekozen hefboom.
 """)
