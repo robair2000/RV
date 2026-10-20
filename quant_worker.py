@@ -59,7 +59,7 @@ def push_file_to_github(filename):
         print(f"☁️ Bestand {filename} succesvol gepusht naar GitHub.")
 
 
-# Uitsluitend 4h tijdsframe (1d is verwijderd omdat de trader alleen 4h leest)
+# Uitsluitend 4h tijdsframe
 timeframes = {
     '4h': {'interval': '4h', 'limit': 1500, 'lookback': 1200, 'min_interval_seconds': 3 * 3600},
 }
@@ -82,7 +82,8 @@ MIN_FEATURE_ROWS = 100
 MIN_LOOKBACK = 300
 
 QUANT_MIN_Z = float(os.environ.get('QUANT_MIN_Z', 1.28))       
-QUANT_MIN_JOINT_N = int(os.environ.get('QUANT_MIN_JOINT_N', 30))
+# Verhoogd naar 100 voor strengere statistische significantie
+QUANT_MIN_JOINT_N = int(os.environ.get('QUANT_MIN_JOINT_N', 100))
 
 SL_ATR_MULT = 2.5
 TP_ATR_MULT = 5.0
@@ -91,7 +92,7 @@ exchange = ccxt.kucoinfutures({
     'enableRateLimit': True,
 })
 
-STATE_VERSION = 8  
+STATE_VERSION = 9  
 
 # Exacte 4h candle timing en buffer
 CANDLE_SECONDS = 4 * 3600
@@ -126,6 +127,8 @@ def default_state():
         'joint_signal_accuracy': None,
         'joint_signal_samples': 0,
         'joint_signal_z': None,
+        'signal_frequency_pct': 0.0,
+        'expected_net_r': 0.0,
         'funding_rate': 0.0,
         'open_interest': 0.0,
         'atr': 0.0,
@@ -352,6 +355,12 @@ def walk_forward_eval(X, y):
     joint_n = int(sel.sum())
     joint_acc = float(np.mean(np.sign(ens[sel]) == np.sign(y_all[sel]))) if joint_n else None
 
+    # Basisfrequentie en Netto R berekenen
+    sig_freq = float((joint_n / len(y_all)) * 100.0) if len(y_all) > 0 else 0.0
+    r_ratio = TP_ATR_MULT / SL_ATR_MULT  # 5.0 / 2.5 = 2.0 R:R
+    win_rate = joint_acc if joint_acc is not None else 0.5
+    net_r = float((win_rate * r_ratio) - ((1.0 - win_rate) * 1.0))
+
     return {
         'weights': weights,
         'maes': maes,
@@ -362,6 +371,8 @@ def walk_forward_eval(X, y):
         'joint_n': joint_n,
         'joint_acc': joint_acc,
         'joint_z': _z_vs_half(joint_acc, joint_n) if joint_n else None,
+        'signal_frequency_pct': sig_freq,
+        'expected_net_r': net_r,
         'holdout_n': int(len(y_all)),
     }
 
@@ -443,6 +454,7 @@ def process(df_raw, state, now, symbol, tf_info):
     last_candle_timestamp = int(df['timestamp'].iloc[-1]) if not df.empty else 0
 
     joint_z = res['joint_z']
+    # Strikte statistically significant edge vereist joint_n >= 100 en z >= 1.28
     has_edge = (
         res['skill'] < 1.0
         and res['joint_n'] >= QUANT_MIN_JOINT_N
@@ -484,6 +496,8 @@ def process(df_raw, state, now, symbol, tf_info):
         'joint_signal_accuracy': res['joint_acc'],
         'joint_signal_samples': res['joint_n'],
         'joint_signal_z': joint_z,
+        'signal_frequency_pct': res.get('signal_frequency_pct', 0.0),
+        'expected_net_r': res.get('expected_net_r', 0.0),
         'funding_rate': funding_rate,
         'open_interest': open_interest,
         'last_close': last_close,
@@ -555,7 +569,8 @@ def main():
                     save_state(state_file, state)
                     written.append(state_file)
                     print(f"📊 Futures Quant {asset} {tf_name}: status={state['data_status']} signal={state['signal']} "
-                          f"funding={state.get('funding_rate', 0):.5f} joint_z={state.get('joint_signal_z')} rows={len(df_raw)}")
+                          f"funding={state.get('funding_rate', 0):.5f} joint_z={state.get('joint_signal_z')} "
+                          f"freq={state.get('signal_frequency_pct', 0):.1f}% net_r={state.get('expected_net_r', 0):.2f} R rows={len(df_raw)}")
                     gc.collect()
                     time.sleep(2.0)
                 except Exception as e:
