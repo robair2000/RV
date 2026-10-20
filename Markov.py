@@ -20,7 +20,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
-        # Opgelost: Geen b"" prefix meer, zodat .encode() correct werkt zonder SyntaxError
         self.wfile.write("<html><body><h2>Markov Worker is online</h2></body></html>".encode("utf-8"))
 
     def do_HEAD(self):
@@ -45,7 +44,7 @@ def push_file_to_github(filename):
         print(f"☁️ Markov state {filename} gepusht naar GitHub.")
 
 
-def calculate_markov probabilities(df):
+def calculate_markov_probabilities(df):  # Typfout gecorrigeerd (underscore toegevoegd)
     if df is None or len(df) < 50:
         return {'green': 50.0, 'red': 50.0}, 1.0
     
@@ -69,8 +68,6 @@ def calculate_markov probabilities(df):
     p_green = (transitions[last_color]['green'] / total_green) * 100.0
     p_red = 100.0 - p_green
     
-    # Bepaal risico-multiplicator op basis van Markov-zekerheid (hoe verder van 50%, hoe hoger/lager de risico-weging)
-    # Geen hard filter meer, maar een schaalfactor voor de risk/leverage (tussen 0.8x en 1.2x)
     max_prob = max(p_green, p_red)
     risk_multiplier = round(float(np.clip(0.8 + (max_prob - 50.0) / 50.0 * 0.4, 0.8, 1.2)), 2)
     
@@ -95,7 +92,7 @@ def run_markov_loop():
                 'updated_at': time.time(),
                 'symbol': symbol,
                 'probabilities_next_4h': probs,
-                'risk_multiplier': risk_mult  # Beïnvloedt enkel de risico-inzet / leverage, blokkeert geen entries meer
+                'risk_multiplier': risk_mult
             }
             
             filename = f'markov_state_{asset.lower()}_4h.json'
@@ -105,7 +102,6 @@ def run_markov_loop():
             push_file_to_github(filename)
             print(f"📊 Markov voor {asset}: Groen={probs['green']}% | Rood={probs['red']}% | Risk Multiplier={risk_mult}")
             
-            # Korte pauze tegen KuCoin rate limits
             time.sleep(2.0)
             
         except Exception as e:
@@ -113,7 +109,6 @@ def run_markov_loop():
 
 
 if __name__ == '__main__':
-    # Start de mini webserver op de achtergrond voor Render (als Web Service)
     threading.Thread(target=run_server, daemon=True).start()
     print("🚀 Markov 4h Worker Web Service gestart met ingebouwde health-check.")
     
@@ -123,4 +118,4 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"⚠️ Fout in Markov hoofdloop: {e}")
             
-        time.sleep(3600)  # Elk uur herberekenen bij nieuwe 4h candles
+        time.sleep(900)
