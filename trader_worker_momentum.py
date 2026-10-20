@@ -202,7 +202,7 @@ def manage_open_positions_and_trailing_stops(symbols):
         positions = execute_with_retry(lambda: exchange.fetch_positions())
     except Exception as e:
         print(f"⚠️ TWM: posities ophalen mislukt (API-hickup overgeslagen): {e}")
-        return  # Belangrijk: bij falen slaan we de ronde over i.p.v. lege state weggooien!
+        return
 
     try:
         open_orders = fetch_all_open_orders(exchange)
@@ -210,7 +210,7 @@ def manage_open_positions_and_trailing_stops(symbols):
         open_orders = None
 
     open_symbols = set()
-    state_changed = False  # Schoon en zonder typfouten
+    state_changed = False
 
     for pos in positions:
         contracts = abs(float(pos.get('contracts') or 0))
@@ -242,7 +242,6 @@ def manage_open_positions_and_trailing_stops(symbols):
         distance_in_atr = sgn * (price - entry) / atr if atr > 0 else 0.0
         old_sl = trade['sl']
 
-        # Breakeven schuiven bij winst >= 1.5 ATR
         if distance_in_atr >= 1.5 and not trade.get('breakeven_secured', False):
             if side == 'long' and trade['sl'] < entry:
                 trade['sl'] = entry
@@ -272,12 +271,11 @@ def manage_open_positions_and_trailing_stops(symbols):
                 active_trades.pop(symbol, None)
                 state_changed = True
 
-    # Alleen verwijderen als de exchange-respons gegarandeerd succesvol was en de positie echt weg is
     to_remove = [sym for sym in active_trades if sym not in open_symbols]
     for sym in to_remove:
         trd = active_trades[sym]
         if not DRY_RUN and open_orders is not None:
-            cancel_orders(exchange, [o for o in open_orders if o.get('symbol') == sym], PREFIX)
+            cancel_orders(exchange, [o for o in open_orders if o.get('symbol'] == sym], PREFIX)
         px = last_price(sym, default=trd.get('entry'))
         log_trade(BOT, 'exit_exchange', sym, trd.get('side', ''), price=px, entry=trd.get('entry'),
                   sl=trd.get('sl'), tp=trd.get('tp'), note='positie gesloten op exchange')
@@ -413,7 +411,10 @@ def evaluate_and_trade_breakout(asset, symbol):
 
     stop_loss_val = price - sgn * risk
     take_profit_val = price + sgn * reward
+    
+    # Haalt de door de agent berekende leverage op (inclusief Markov risk multiplier)
     leverage = int(pst.get('recommended_leverage', 2))
+    risk_mult = float(pst.get('risk_multiplier', 1.0))
 
     amount = compute_contract_amount(symbol, price, leverage)
     if amount is None:
@@ -421,7 +422,7 @@ def evaluate_and_trade_breakout(asset, symbol):
 
     side = 'buy' if is_long else 'sell'
     if DRY_RUN:
-        print(f"🧪 [DRY RUN SQUEEZE] {side} {amount}x {symbol} | SL {stop_loss_val:.4f} | TP {take_profit_val:.4f}")
+        print(f"🧪 [DRY RUN SQUEEZE] {side} {amount}x {symbol} | Lev: {leverage} (risk_mult={risk_mult}) | SL {stop_loss_val:.4f} | TP {take_profit_val:.4f}")
         return
 
     if not ensure_margin_and_leverage(symbol, leverage):
@@ -458,9 +459,9 @@ def evaluate_and_trade_breakout(asset, symbol):
         'sl': stop_loss_val, 'tp': take_profit_val, 'breakeven_secured': False, 'protected_contracts': amount,
     }
     log_trade(BOT, 'entry_filled', symbol, position_side, price=price, amount=amount,
-              entry=price, sl=stop_loss_val, tp=take_profit_val, note=f'score={score} breakout')
+              entry=price, sl=stop_loss_val, tp=take_profit_val, note=f'score={score} lev={leverage} risk_mult={risk_mult} breakout')
     push_trader_status_to_github()
-    print(f"🚀 SQUEEZE TRADER SUCCES: {symbol} ({side} {amount}), SL={stop_loss_val:.4f}, TP={take_profit_val:.4f}")
+    print(f"🚀 SQUEEZE TRADER SUCCES: {symbol} ({side} {amount}), Lev={leverage} (RiskMult={risk_mult}), SL={stop_loss_val:.4f}, TP={take_profit_val:.4f}")
 
 
 if __name__ == '__main__':
@@ -470,7 +471,6 @@ if __name__ == '__main__':
     while True:
         try:
             pull_ranking_from_github()
-            # Gebruikt nu netjes de centrale helper i.p.v. dubbele code
             current_symbols = get_combined_trading_assets()
             manage_open_positions_and_trailing_stops(current_symbols)
             execute_live_trades_scan(current_symbols)
