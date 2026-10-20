@@ -17,7 +17,19 @@ DAILY_LOSS_CLOSE_POSITIONS = os.environ.get('DAILY_LOSS_CLOSE_POSITIONS', 'false
 # Geschatte kosten per kant (taker fee + slippage) voor journal-schattingen, als fractie (0.0006 = 0.06%)
 EST_FEE_PER_SIDE = float(os.environ.get('EST_FEE_PER_SIDE', 0.0006))
 
-JOURNAL_FILE = os.environ.get('TRADE_JOURNAL_FILE', 'trade_journal.csv')
+# Elke bot krijgt standaard een eigen journal (trade_journal_v20.csv / trade_journal_twm.csv), zodat
+# twee services die allebei het hele bestand naar GitHub PUT-en elkaar niet overschrijven.
+# TRADE_JOURNAL_FILE blijft als expliciete override werken.
+_JOURNAL_OVERRIDE = os.environ.get('TRADE_JOURNAL_FILE', '').strip()
+
+
+def journal_file_for(bot):
+    if _JOURNAL_OVERRIDE:
+        return _JOURNAL_OVERRIDE
+    safe = ''.join(c for c in str(bot).lower() if c.isalnum()) or 'bot'
+    return f'trade_journal_{safe}.csv'
+
+
 JOURNAL_FIELDS = [
     'ts_iso', 'bot', 'event', 'symbol', 'side', 'price', 'amount',
     'entry', 'sl', 'tp', 'est_gross_pnl_pct', 'est_fees_pct', 'est_net_pnl_pct', 'note',
@@ -25,15 +37,16 @@ JOURNAL_FIELDS = [
 
 
 def log_trade(bot, event, symbol, side='', price=None, amount=None, entry=None, sl=None, tp=None, note=''):
-    """Schrijft één regel naar trade_journal.csv en pusht het bestand naar GitHub.
+    """Schrijft één regel naar het journal van deze bot (trade_journal_<bot>.csv) en pusht het bestand naar GitHub.
 
     Bij 'exit*'-events wordt een geschatte PnL berekend uit entry en exit-prijs
     (gross) minus 2x EST_FEE_PER_SIDE. Funding en echte fills zitten er NIET in.
     """
     try:
+        journal = journal_file_for(bot)
         # Na een herstart van een ephemeral instance eerst de bestaande historie terughalen
-        if not os.path.exists(JOURNAL_FILE):
-            github_pull(JOURNAL_FILE, agent='rv-journal')
+        if not os.path.exists(journal):
+            github_pull(journal, agent='rv-journal')
 
         gross = fees = net = ''
         if event.startswith('exit') and entry and price and side in ('long', 'short'):
@@ -42,8 +55,8 @@ def log_trade(bot, event, symbol, side='', price=None, amount=None, entry=None, 
             f = 2 * EST_FEE_PER_SIDE
             gross, fees, net = round(g * 100, 4), round(f * 100, 4), round((g - f) * 100, 4)
 
-        new_file = not os.path.exists(JOURNAL_FILE)
-        with open(JOURNAL_FILE, 'a', newline='', encoding='utf-8') as f:
+        new_file = not os.path.exists(journal)
+        with open(journal, 'a', newline='', encoding='utf-8') as f:
             w = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
             if new_file:
                 w.writeheader()
@@ -54,8 +67,8 @@ def log_trade(bot, event, symbol, side='', price=None, amount=None, entry=None, 
                 'est_gross_pnl_pct': gross, 'est_fees_pct': fees, 'est_net_pnl_pct': net,
                 'note': note,
             })
-        with open(JOURNAL_FILE, 'rb') as f:
-            github_put(JOURNAL_FILE, f.read(), agent='rv-journal')
+        with open(journal, 'rb') as f:
+            github_put(journal, f.read(), agent='rv-journal')
     except Exception as e:
         print(f"⚠️ Journal schrijven mislukt: {e}")
 
