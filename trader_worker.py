@@ -349,7 +349,8 @@ def manage_open_positions_and_trailing_stops(symbols):
                 to_remove.append(sym)
         elif trd.get('status') == 'open':
             if not DRY_RUN and open_orders is not None:
-                cancel_orders(exchange, [o for o in open_orders if o.get('symbol'] == sym], PREFIX)
+                # GECORRIGEERD: bracket fout opgelost van o.get('symbol'] naar o.get('symbol')
+                cancel_orders(exchange, [o for o in open_orders if o.get('symbol') == sym], PREFIX)
             px = last_price(sym, default=trd.get('entry'))
             log_trade(BOT, 'exit_exchange', sym, trd.get('side', ''), price=px, entry=trd.get('entry'), sl=trd.get('sl'), tp=trd.get('tp'))
             symbol_cooldowns[sym] = time.time()
@@ -426,7 +427,6 @@ def execute_live_trades_scan(symbols):
 
 
 def evaluate_and_trade(asset, symbol):
-    # Luistert UITSLUITEND naar de quant worker model_state
     state_4h = load_state(asset, '4h')
     if state_4h is None:
         return
@@ -452,14 +452,12 @@ def evaluate_and_trade(asset, symbol):
     is_long = (quant_signal == 'long')
     sgn = 1 if is_long else -1
 
-    # Haalt rechtstreeks de berekende SL en TP op uit de quant worker state
     stop_loss_val = float(state_4h.get('stop_loss', price - sgn * 2.5 * atr))
     take_profit_val = float(state_4h.get('take_profit', price + sgn * 5.0 * atr))
 
-    # Kleine limit offset (0.2 ATR) voor betere uitvoering
     limit_price = price - (0.2 * atr) if is_long else price + (0.2 * atr)
 
-    leverage = 2  # Standaard veilige hefboom voor quant trades
+    leverage = 2
     amount = compute_contract_amount(symbol, limit_price, target_notional=TRADE_AMOUNT_USDT * leverage)
     if amount is None:
         return
