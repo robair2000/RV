@@ -134,6 +134,7 @@ def process_data(df_in):
     tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
     df['atr'] = tr.rolling(14).mean().fillna(close * 0.02)
     
+    # ADX berekening
     up = high.diff()
     down = -low.diff()
     tr_s = tr.ewm(alpha=1.0/14, adjust=False).mean()
@@ -141,16 +142,24 @@ def process_data(df_in):
     minus_di = 100.0 * down.where((down > up) & (down > 0), 0.0).ewm(alpha=1.0/14).mean() / (tr_s + 1e-8)
     df['adx'] = (100.0 * (plus_di - minus_di).abs() / ((plus_di + minus_di) + 1e-8)).ewm(alpha=1.0/14).mean().fillna(20.0)
 
+    # MACD berekening
     ema12 = close.ewm(span=12, adjust=False).mean()
     ema26 = close.ewm(span=26, adjust=False).mean()
     df['macd_hist'] = (ema12 - ema26) - (ema12 - ema26).ewm(span=9, adjust=False).mean()
     
+    # Bollinger Bands & %B
     sma20 = close.rolling(20).mean()
     std20 = close.rolling(20).std()
     df['sma20'] = sma20
     df['pct_b'] = (close - (sma20 - 2 * std20)) / ((4 * std20) + 1e-8)
     df['vol_ratio'] = (volume / volume.rolling(20).mean().where(lambda x: x > 0)).fillna(1.0)
     df['ema9'] = close.ewm(span=9, adjust=False).mean()
+
+    # --- HIER WAS DE RSI TOEVOEGING DIE ONTBRAK ---
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0.0).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0.0)).rolling(14).mean()
+    df['rsi'] = 100.0 - (100.0 / (1.0 + gain / (loss + 1e-8)))
 
     return df.dropna().reset_index(drop=True)
 
