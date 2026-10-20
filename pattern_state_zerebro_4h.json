@@ -1,16 +1,10 @@
 {
-  "pattern_score": 50.0,
-  "pattern_signal": "none",
-  "twm_signal": "none",
-  "twm_score": 50.0,
-  "recommended_leverage": 1,
-  "strictness_mode": "squeeze_breakout_markov_4h",
-  "atr_pct": 8.333462578387124,
-  "adx_4h": 21.465110095969507,
-  "volume_expansion_ratio": 0.4763026747439557,
-  "sma20": 0.024617850000000004,
-  "meta_status": "no_setup",
-  "meta_prob": null,
-  "last_candle_ts": 1792512000,
-  "updated_at": 1792533159.1258824
+  "updated_at": 1792535567.5952675,
+  "last_candle_ts": 1792497600000,
+  "pattern_signal": "short",
+  "pattern_score": 80.0,
+  "recommended_leverage": 2,
+  "risk_multiplier": 1.0,
+  "atr_pct": 2.0,
+  "min_score_required": 75.0
 }
