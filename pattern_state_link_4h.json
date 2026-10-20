@@ -13,13 +13,13 @@
   "adx_4h": 31.95,
   "volume_expansion_ratio": 0.98,
   "sma20": 12.03885,
-  "meta_status": "meta-gate gesloten: AUC 0.533 niet significant (z=0.39 < 1.28)",
+  "meta_status": "meta-gate gesloten: AUC 0.540 niet significant (z=0.52 < 1.28)",
   "meta_prob": null,
-  "meta_threshold": 0.2953,
-  "meta_auc": 0.5327,
-  "meta_z": 0.39,
-  "meta_events": 881,
-  "breakeven_prob": 0.2453,
+  "meta_threshold": 0.2948,
+  "meta_auc": 0.5396,
+  "meta_z": 0.52,
+  "meta_events": 1001,
+  "breakeven_prob": 0.2448,
   "last_candle_ts": 1792454400,
-  "updated_at": 1792469356.5695355
+  "updated_at": 1792471367.6701965
 }
