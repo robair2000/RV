@@ -22,7 +22,7 @@ from catboost import CatBoostRegressor
 from sklearn.ensemble import RandomForestRegressor
 
 from github_utils import github_put
-from market_utils import fetch_ohlcv_paginated, fetch_cached_1d_shared
+from market_utils import fetch_ohlcv_paginated
 from asset_utils import get_combined_trading_assets
 
 warnings.filterwarnings('ignore')
@@ -42,7 +42,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def log_message(self, format, *args):
-        pass  # Voorkomt spam in de logs
+        pass
 
 
 def run_server():
@@ -59,15 +59,14 @@ def push_file_to_github(filename):
         print(f"☁️ Bestand {filename} succesvol gepusht naar GitHub.")
 
 
+# Uitsluitend 4h tijdsframe (1d is verwijderd omdat de trader alleen 4h leest)
 timeframes = {
     '4h': {'interval': '4h', 'limit': 1500, 'lookback': 1200, 'min_interval_seconds': 3 * 3600},
-    '1d': {'interval': '1d', 'limit': 1000, 'lookback': 800, 'min_interval_seconds': 23 * 3600},
 }
 
-# --- Futures-specifieke features ---
+# Slanke, niet-overfitted feature set (momentum en volatiliteit)
 base_features = [
-    'return_1', 'return_3', 'return_6', 'RSI', 'atr_ratio', 'bb_position', 
-    'MACD_hist', 'OBV_slope', 'VWAP_dist', 'vol_ratio', 'price_range_ratio'
+    'return_1', 'return_3', 'RSI', 'atr_ratio', 'bb_position', 'vol_ratio'
 ]
 
 MODEL_NAMES = ['xgb', 'cat', 'rf']
@@ -92,7 +91,7 @@ exchange = ccxt.kucoinfutures({
     'enableRateLimit': True,
 })
 
-STATE_VERSION = 4  
+STATE_VERSION = 8  
 
 
 def default_state():
@@ -117,6 +116,8 @@ def default_state():
         'joint_signal_accuracy': None,
         'joint_signal_samples': 0,
         'joint_signal_z': None,
+        'funding_rate': 0.0,
+        'open_interest': 0.0,
         'atr': 0.0,
         'atr_pct': 0.0,
         'last_close': None,
@@ -170,45 +171,46 @@ def save_state(state_file, state):
 def fetch_data_safely(symbol, tf_info):
     try:
         df = fetch_ohlcv_paginated(exchange, symbol, tf_info['interval'], tf_info['limit'])
-        time.sleep(2.0)  # 2s pauze tegen rate limits
+        time.sleep(1.0)
         if len(df) >= 5:
             return df
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf_info['interval'], limit=200)
-        time.sleep(2.0)  # 2s pauze tegen rate limits
+        time.sleep(1.0)
         if not ohlcv or len(ohlcv) < 5:
             return pd.DataFrame()
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         return df.iloc[:-1].reset_index(drop=True)
     except Exception as e:
         print(f"❌ KuCoin Futures fetch fout voor {symbol}: {e}")
-        time.sleep(2.0)
+        time.sleep(1.0)
         return pd.DataFrame()
 
 
 def fetch_futures_market_context(symbol):
-    """Haalt live futures-data op met ingebouwde 2s sleeps tegen rate limits."""
     funding_rate = 0.0
     open_interest = 0.0
     try:
         fr_data = exchange.fetch_funding_rate(symbol)
-        time.sleep(2.0)  # 2s pauze
+        time.sleep(1.0)
         if fr_data and 'fundingRate' in fr_data:
             funding_rate = float(fr_data['fundingRate'] or 0.0)
-    except Exception:
-        time.sleep(2.0)
+    except Exception as e:
+        print(f"⚠️ Kon funding rate niet ophalen voor {symbol}: {e}")
+        time.sleep(1.0)
 
     try:
         oi_data = exchange.fetch_open_interest(symbol)
-        time.sleep(2.0)  # 2s pauze
-        if oi_data and 'openInterestAmount' in oi_data:
-            open_interest = float(oi_data['openInterestAmount'] or 0.0)
-    except Exception:
-        time.sleep(2.0)
+        time.sleep(1.0)
+        if oi_data and ('openInterestAmount' in oi_data or 'openInterest' in oi_data):
+            open_interest = float(oi_data.get('openInterestAmount') or oi_data.get('openInterest') or 0.0)
+    except Exception as e:
+        print(f"⚠️ Kon open interest niet ophalen voor {symbol}: {e}")
+        time.sleep(1.0)
 
     return funding_rate, open_interest
 
 
-def compute_futures_features(df):
+def compute_features(df):
     df = df.copy()
     close = df['close']
     high = df['high']
@@ -217,7 +219,6 @@ def compute_futures_features(df):
     sma20 = close.rolling(window=20).mean()
     df['return_1'] = close.pct_change()
     df['return_3'] = close.pct_change(3)
-    df['return_6'] = close.pct_change(6)
 
     delta = close.diff()
     gain = delta.where(delta > 0, 0.0)
@@ -232,25 +233,10 @@ def compute_futures_features(df):
     atr = true_range.rolling(window=14).mean()
     df['atr_ratio'] = (atr / (close + 1e-8)) * 100.0
 
-    df['price_range_ratio'] = (high - low) / (close + 1e-8) * 100.0
-
     bb_std = close.rolling(window=20).std()
     bb_upper = sma20 + (bb_std * 2.0)
     bb_lower = sma20 - (bb_std * 2.0)
     df['bb_position'] = (close - bb_lower) / ((bb_upper - bb_lower) + 1e-8)
-
-    ema_12 = close.ewm(span=12, adjust=False).mean()
-    ema_26 = close.ewm(span=26, adjust=False).mean()
-    macd_line = ema_12 - ema_26
-    macd_signal = macd_line.ewm(span=9, adjust=False).mean()
-    df['MACD_hist'] = (macd_line - macd_signal) / (close + 1e-8) * 100.0
-
-    obv = (np.sign(close.diff()) * df['volume']).fillna(0).cumsum()
-    df['OBV_slope'] = obv.diff(3) / (df['volume'].rolling(20).mean() + 1e-8)
-
-    typical_price = (high + low + close) / 3
-    vwap = (typical_price * df['volume']).rolling(20).sum() / (df['volume'].rolling(20).sum() + 1e-8)
-    df['VWAP_dist'] = (close - vwap) / (vwap + 1e-8)
 
     df['vol_ratio'] = df['volume'] / (df['volume'].rolling(20).mean() + 1e-8)
     df['ATR'] = atr
@@ -402,15 +388,14 @@ def process(df_raw, state, now, symbol, tf_info):
     if len(df_raw) < MIN_FEATURE_ROWS:
         return _insufficient(state, now), False
 
-    df = compute_futures_features(df_raw)
-
+    df = compute_features(df_raw)
     regime = get_market_regime(df)
     state['current_regime'] = regime
 
     lookback = tf_info['lookback']
     res = score_config(df, base_features, lookback)
 
-    if res is None or res['skill'] >= 1.0 or res['dir_acc'] < 0.50:
+    if res is None:
         return _insufficient(state, now), False
 
     feats = res['features_used']
@@ -447,20 +432,8 @@ def process(df_raw, state, now, symbol, tf_info):
     atr = float(atr) if pd.notna(atr) and atr > 0 else last_close * 0.02
     last_candle_timestamp = int(df['timestamp'].iloc[-1]) if not df.empty else 0
 
-    funding_rate, open_interest = fetch_futures_market_context(symbol)
-
-    reg_up = ens_ret > 0
-    clf_up = prob_up >= 52.0
-    clf_down = prob_up <= 48.0
-
-    if funding_rate < -0.0005:  
-        prob_up = max(prob_up, 53.0)
-        clf_up = True
-    elif funding_rate > 0.0005:  
-        prob_up = min(prob_up, 47.0)
-        clf_down = True
-
     joint_z = res['joint_z']
+    # Enige, krachtige statistische poort
     has_edge = (
         res['skill'] < 1.0
         and res['joint_n'] >= QUANT_MIN_JOINT_N
@@ -468,11 +441,27 @@ def process(df_raw, state, now, symbol, tf_info):
         and joint_z >= QUANT_MIN_Z
     )
 
-    if has_edge and reg_up and clf_up:
-        signal, sig_prob = 'long', prob_up
-    elif has_edge and (not reg_up) and clf_down:
-        signal, sig_prob = 'short', 100.0 - prob_up
-    else:
+    reg_up = ens_ret > 0
+    clf_up = prob_up >= 52.0
+    clf_down = prob_up <= 48.0
+
+    # 1. Bepaal signaal zuiver op basis van modellen
+    signal, sig_prob = 'none', 50.0
+    if has_edge:
+        if reg_up and clf_up:
+            signal, sig_prob = 'long', prob_up
+        elif (not reg_up) and clf_down:
+            signal, sig_prob = 'short', 100.0 - prob_up
+
+    # 2. Lazy loading: haal pas futures context op als er een edge is
+    funding_rate, open_interest = 0.0, 0.0
+    if has_edge:
+        funding_rate, open_interest = fetch_futures_market_context(symbol)
+
+    # 3. Symmetrisch risicofilter op funding (blokkeert enkel, forceert nooit)
+    if signal == 'long' and funding_rate > 0.0005:
+        signal, sig_prob = 'none', 50.0
+    elif signal == 'short' and funding_rate < -0.0005:
         signal, sig_prob = 'none', 50.0
 
     sign = 1 if reg_up else -1
@@ -502,12 +491,12 @@ def process(df_raw, state, now, symbol, tf_info):
         'atr_pct': atr / last_close * 100.0,
         'stop_loss': (last_close - sign * SL_ATR_MULT * atr) if signal != 'none' else 0.0,
         'take_profit': (last_close + sign * TP_ATR_MULT * atr) if signal != 'none' else 0.0,
-        'data_status': 'ok',
+        'data_status': 'ok' if has_edge else 'insufficient_data',
         'last_trained_timestamp': now,
         'last_candle_ts': last_candle_timestamp,
         'updated_at': int(now),
     })
-    return state, True
+    return state, has_edge
 
 
 def push_to_github(files):
@@ -518,13 +507,12 @@ def push_to_github(files):
             with open(fname, 'rb') as f:
                 content = f.read()
             github_put(fname, content, agent='v20-quant-worker')
-            time.sleep(1.0)  # Korte pauze bij GitHub pushes
+            time.sleep(1.0)
         except Exception as e:
             print(f"❌ Push van {fname} mislukt: {e}")
 
 
 def main():
-    # Start de mini webserver op de achtergrond voor Render (Web Service op poort 10000)
     threading.Thread(target=run_server, daemon=True).start()
     print("🚀 Quant Worker Web Service gestart met ingebouwde health-check op poort 10000.")
 
@@ -545,6 +533,7 @@ def main():
         for symbol in symbols_scope:
             asset = symbol.split('/')[0].split(':')[0]
 
+            # Uitsluitend itereren over 4h
             for tf_name, tf_info in timeframes.items():
                 state_file = f'model_state_{asset.lower()}_{tf_name}.json'
                 try:
@@ -553,29 +542,23 @@ def main():
                     if now - state.get('last_trained_timestamp', 0) < tf_info['min_interval_seconds']:
                         continue
                     
-                    if tf_name == '1d':
-                        df_raw = fetch_cached_1d_shared(exchange, symbol, asset, total_bars=tf_info['limit'])
-                        time.sleep(2.0)  # 2s pauze na ophalen 1d data
-                    else:
-                        df_raw = fetch_data_safely(symbol, tf_info)
-
+                    df_raw = fetch_data_safely(symbol, tf_info)
                     if df_raw.empty:
                         continue
+
                     state, ok = process(df_raw, state, now, symbol, tf_info)
                     save_state(state_file, state)
                     written.append(state_file)
                     print(f"📊 Futures Quant {asset} {tf_name}: status={state['data_status']} signal={state['signal']} "
                           f"funding={state.get('funding_rate', 0):.5f} joint_z={state.get('joint_signal_z')} rows={len(df_raw)}")
                     gc.collect()
-                    time.sleep(2.0)  # Standaard 2 seconden pauze per munt/timeframe tegen 429 errors
+                    time.sleep(2.0)
                 except Exception as e:
                     print(f"❌ Fout bij {asset} ({tf_name}): {e}")
                     gc.collect()
                     time.sleep(2.0)
         
         push_to_github(written)
-
-        # Wacht tot de volgende cyclus (1 uur)
         time.sleep(3600)
 
 
