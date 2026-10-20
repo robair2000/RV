@@ -57,13 +57,15 @@ def push_file_to_github(filename):
 def load_markov_state(asset):
     path = f'markov_state_{asset.lower()}_4h.json'
     if not os.path.exists(path):
-        return {'green': 50.0, 'red': 50.0}
+        return {'green': 50.0, 'red': 50.0}, 1.0
     try:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            return data.get('probabilities_next_4h', {'green': 50.0, 'red': 50.0})
+            probs = data.get('probabilities_next_4h', {'green': 50.0, 'red': 50.0})
+            risk_mult = float(data.get('risk_multiplier', 1.0))
+            return probs, risk_mult
     except Exception:
-        return {'green': 50.0, 'red': 50.0}
+        return {'green': 50.0, 'red': 50.0}, 1.0
 
 
 def compute_indicators(df):
@@ -87,7 +89,7 @@ def compute_indicators(df):
     return df.dropna().reset_index(drop=True)
 
 
-def compute_primary_setups(d4, d1, markov_data=None):
+def compute_primary_setups(d4, d1):
     df = compute_indicators(d4)
     if df.empty:
         return pd.DataFrame()
@@ -106,10 +108,8 @@ def compute_primary_setups(d4, d1, markov_data=None):
         sma20 = d4['close'].rolling(20).mean().iloc[i]
         signal = 'long' if close > sma20 else 'short'
 
-        if markov_data:
-            prob = markov_data.get('green' if signal == 'long' else 'red', 50.0)
-            if prob < 52.0:
-                continue
+        # Markov filter is hier verwijderd: Markov blokkeert geen entries meer, 
+        # maar beïnvloedt straks puur de risk multiplier / leverage.
 
         setups.append({
             'timestamp': int(row['timestamp']),
@@ -136,14 +136,14 @@ def run_agent_scan():
     for symbol in symbols:
         asset = symbol.split('/')[0].split(':')[0]
         try:
-            print(Bezig met ophalen en scannen van {symbol}...)
+            print(f"Bezig met ophalen en scannen van {symbol}...")
             d4 = fetch_ohlcv_paginated(exchange, symbol, '4h', total_bars=META_HISTORY_4H)
             if d4 is None or len(d4) < 100:
                 continue
             d4 = d4.iloc[:-1].reset_index(drop=True)
 
-            markov_probs = load_markov_state(asset)
-            setups = compute_primary_setups(d4, None, markov_data=markov_probs)
+            markov_probs, risk_mult = load_markov_state(asset)
+            setups = compute_primary_setups(d4, None)
 
             latest_signal = 'none'
             score = 50.0
@@ -153,7 +153,10 @@ def run_agent_scan():
                 last_setup = setups.iloc[-1]
                 latest_signal = last_setup['signal']
                 score = 80.0
-                leverage = 3 if score >= 85 else 2
+                
+                # Basishefboom vermenigvuldigd met de Markov risk_multiplier (begrensd tussen 1x en 5x)
+                base_lev = 3 if score >= 85 else 2
+                leverage = int(np.clip(round(base_lev * risk_mult), 1, 5))
 
             state = {
                 'updated_at': time.time(),
@@ -161,6 +164,7 @@ def run_agent_scan():
                 'pattern_signal': latest_signal,
                 'pattern_score': score,
                 'recommended_leverage': leverage,
+                'risk_multiplier': risk_mult,
                 'atr_pct': float(d4['atr_pct'].iloc[-1]) if 'atr_pct' in d4 else 2.0,
                 'min_score_required': MIN_BOSS_SCORE
             }
@@ -171,7 +175,7 @@ def run_agent_scan():
             
             push_file_to_github(filename)
             written.append(filename)
-            print(f"🚀 Squeeze Agent geüpdatet voor {asset}: signal={latest_signal}")
+            print(f"🚀 Squeeze Agent geüpdatet voor {asset}: signal={latest_signal}, lev={leverage} (risk_mult={risk_mult})")
 
             # Cruciaal: rustpauze tussen munten om KuCoin rate limits (429) te voorkomen
             time.sleep(3.0)
@@ -194,5 +198,5 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"⚠️ Fout in agent hoofdloop: {e}")
         
-        # Wacht bijvoorbeeld 30 minuten tot de volgende scan
+        # Wacht 30 minuten tot de volgende scan
         time.sleep(1800)
