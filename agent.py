@@ -30,7 +30,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
-        self.wfile.write(b"<html><body><h2>🚀 Squeeze Agent is online</h2></body></html>")
+        self.wfile.write("<html><body><h2>🚀 Squeeze Agent is online</h2></body></html>".encode("utf-8"))
 
     def do_HEAD(self):
         self.send_response(200)
