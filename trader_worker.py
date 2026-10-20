@@ -9,8 +9,9 @@ import ccxt
 import pandas as pd
 
 from github_utils import github_pull, github_put
-from order_utils import (cancel_orders, fetch_all_open_orders, replace_protective_orders,
-                         replace_stop_loss)
+from asset_utils import get_combined_trading_assets
+from order_utils import (cancel_orders, describe_sizing, fetch_all_open_orders, find_protective_levels,
+                         replace_protective_orders, replace_stop_loss)
 from risk_utils import DAILY_LOSS_CLOSE_POSITIONS, DailyLossGuard, log_trade
 
 BOT = 'V20'
@@ -67,27 +68,6 @@ def pull_ranking_from_github():
     github_pull('kucoin_best_coins_ranking.csv', min_interval=STATE_PULL_INTERVAL, agent=AGENT)
 
 
-def get_combined_trading_assets(top_n=1):
-    # Al je core-munten weer teruggezet
-    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']  
-    ranking_file = 'kucoin_best_coins_ranking.csv'
-    dynamic_symbols = []
-
-    if os.path.exists(ranking_file):
-        try:
-            df = pd.read_csv(ranking_file)
-            if 'Symbol' in df.columns:
-                # Pak alleen de allersterkste nummer 1 uit de ranking!
-                for s in df['Symbol'].head(1).tolist():
-                    if s not in dynamic_symbols and ':USDT' in s:
-                        dynamic_symbols.append(s)
-            print(f"📈 Dynamische nummer 1 ingeladen: {dynamic_symbols}")
-        except Exception as e:
-            print(f"⚠️ Fout bij lezen van ranking CSV in agent: {e}")
-
-    combined = list(dict.fromkeys(core_symbols + dynamic_symbols))
-    print(f"🎯 Actieve agent trading scope ({len(combined)} symbols): {combined}")
-    return combined
 
 
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
@@ -98,6 +78,9 @@ DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 
 MAX_CONCURRENT_POSITIONS = int(os.environ.get('MAX_CONCURRENT_POSITIONS', 5))
+# Crypto-majors zijn sterk gecorreleerd: 5 longs tegelijk in één cross-pool is feitelijk één gehevelde bet.
+# Max aantal posities/orders van deze bot in DEZELFDE richting. 0 = uit (ongewijzigd gedrag).
+MAX_SAME_DIRECTION = int(os.environ.get('MAX_SAME_DIRECTION', 0))
 MIN_RRR = 3.0
 TP_ATR_mult_BASE = 5.0
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
@@ -261,6 +244,44 @@ def close_position(symbol, side, contracts):
         return False
 
 
+def same_direction_count(side):
+    return sum(1 for t in active_trades.values() if t.get('side') == side)
+
+
+def adopt_orphan_position(symbol, side, contracts, pos_entry, open_orders):
+    """Bouwt de trade-administratie opnieuw op voor een open positie zonder state-entry.
+
+    Voorwaarden (anders None, positie blijft ongemoeid): open orders zijn bekend, de entry-prijs is bekend
+    en er staat een eigen stop-loss (clientOrderId 'v20_sl_*') voor dit symbool. ATR komt uit de 4h model-state
+    (zelfde bron als bij entry), met terugval op |entry - SL| / SL-multiple. De trailing hervat vanaf de
+    huidige koers; een al verschoven SL blijft de SL van de exchange-order."""
+    if open_orders is None or pos_entry <= 0 or side not in ('long', 'short'):
+        return None
+    sl, tp = find_protective_levels(open_orders, symbol, PREFIX)
+    if sl is None:
+        return None
+    sgn = 1 if side == 'long' else -1
+    price = last_price(symbol, default=pos_entry)
+    asset = symbol.split('/')[0].split(':')[0]
+    st = load_state(asset, '4h')
+    atr_pct = float((st or {}).get('atr_pct') or 0.0)
+    atr = price * atr_pct / 100.0 if atr_pct > 0 else abs(pos_entry - sl) / 2.5
+    if not atr > 0:
+        return None
+    tp_val = tp if tp else pos_entry + sgn * max(TP_ATR_mult_BASE, 2.5 * (MIN_RRR + 0.2)) * atr
+    trade = {
+        'status': 'open', 'created_at': time.time(), 'adopted': True, 'side': side,
+        'entry': pos_entry, 'peak': max(pos_entry, price) if side == 'long' else min(pos_entry, price),
+        'atr': atr, 'sl': sl, 'tp': tp_val, 'trailing_mult': 2.5,
+        'breakeven_secured': (sl >= pos_entry) if side == 'long' else (sl <= pos_entry),
+        'protected_contracts': contracts,
+    }
+    print(f"♻️ V20: positie {symbol} ({side} {contracts}) overgenomen na verloren state | entry {pos_entry} SL {sl} TP {tp_val}")
+    log_trade(BOT, 'adopted', symbol, side, price=price, amount=contracts, entry=pos_entry, sl=sl, tp=tp_val,
+              note='state verloren; overgenomen via eigen v20_sl_-order')
+    return trade
+
+
 def manage_open_positions_and_trailing_stops(symbols):
     try:
         positions = execute_with_retry(lambda: exchange.fetch_positions())
@@ -289,7 +310,13 @@ def manage_open_positions_and_trailing_stops(symbols):
 
         trade = active_trades.get(symbol)
         if trade is None:
-            continue
+            # Status verloren (herstart zonder GitHub-state)? Neem een positie over die aantoonbaar van deze bot
+            # is: alleen als er een eigen v20_sl_-order voor staat. Handmatige posities blijven onaangeroerd.
+            trade = adopt_orphan_position(symbol, side, contracts, float(pos.get('entryPrice') or 0), open_orders)
+            if trade is None:
+                continue
+            active_trades[symbol] = trade
+            state_changed = True
 
         open_symbols.add(symbol)
         pos_entry = float(pos.get('entryPrice') or 0)
@@ -563,6 +590,9 @@ def evaluate_and_trade(asset, symbol):
         return
 
     is_long = (quant_signal == 'long')
+    if MAX_SAME_DIRECTION > 0 and same_direction_count(quant_signal) >= MAX_SAME_DIRECTION:
+        print(f"ℹ️ V20: {symbol} {quant_signal} overgeslagen, al {MAX_SAME_DIRECTION} posities/orders in die richting (MAX_SAME_DIRECTION).")
+        return
     direction_prob = float(state_4h.get('direction_probability', 50.0))
     if is_long and direction_prob < 50.0:
         return
@@ -629,6 +659,14 @@ if __name__ == '__main__':
     pull_status_from_github()
     threading.Thread(target=run_server, daemon=True).start()
     print("🚀 V20 Trader Worker gestart (scan interval: 60 seconden).")
+    try:
+        exchange.load_markets()
+        print(f"📏 Sizing-check (margin {TRADE_AMOUNT_USDT} USDT, hefboom 2x = notional {TRADE_AMOUNT_USDT * 2:.0f} USDT; V20 gebruikt 1-3x):")
+        for _s, _per, _ok in describe_sizing(exchange, get_combined_trading_assets(), TRADE_AMOUNT_USDT, 2):
+            flag = '❓' if _ok is None else ('✅' if _ok else '⛔ wordt overgeslagen')
+            print(f"   {flag} {_s}: 1 contract = {'?' if _per is None else f'${_per:,.2f}'}")
+    except Exception as _e:
+        print(f"⚠️ Sizing-check mislukt: {_e}")
     if guard.enabled:
         print(f"🛡️ MAX_DAILY_LOSS_USDT actief: {guard.max_loss} USDT (sluit posities bij limiet: {DAILY_LOSS_CLOSE_POSITIONS}).")
     else:
@@ -636,7 +674,7 @@ if __name__ == '__main__':
     while True:
         try:
             pull_ranking_from_github()
-            current_symbols = get_combined_trading_assets(top_n=5)
+            current_symbols = get_combined_trading_assets()
 
             manage_open_positions_and_trailing_stops(current_symbols)
             execute_live_trades_scan(current_symbols)
