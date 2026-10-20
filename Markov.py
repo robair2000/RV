@@ -5,72 +5,62 @@ import ccxt
 import pandas as pd
 import numpy as np
 from github_utils import github_put
+from market_utils import fetch_ohlcv_paginated
 
-GITHUB_REPO = os.environ.get('GITHUB_REPO', 'robair2000/RV')
 EXCHANGE = ccxt.kucoinfutures({'enableRateLimit': True})
 
-def fetch_daily_candles(symbol, limit=400):
+def fetch_4h_candles(symbol, limit=1000):
     try:
-        ohlcv = EXCHANGE.fetch_ohlcv(symbol, '1d', limit=limit)
-        if not ohlcv or len(ohlcv) < 50:
+        # Haalt 4h candles op via de gedeelde paginated helper
+        df = fetch_ohlcv_paginated(EXCHANGE, symbol, '4h', total_bars=limit)
+        if df.empty or len(df) < 100:
             return pd.DataFrame()
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        return df.iloc[:-1].reset_index(drop=True)
+        return df
     except Exception as e:
-        print(f"⚠️ Fout bij ophalen dagelijkse candles voor {symbol}: {e}")
+        print(f"⚠️ Fout bij ophalen 4h candles voor {symbol}: {e}")
         return pd.DataFrame()
 
-def compute_regime_markov(df, window=20, threshold=0.05):
+def compute_4h_candle_markov(df):
     df = df.copy()
+    # 1. Bepaal of de candle groen of rood is
+    df['color'] = np.where(df['close'] >= df['open'], 'green', 'red')
+    df['prev_color'] = df['color'].shift(1)
     
-    # 1. Bereken de 20-daagse cumulatieve rendementen
-    df['cum_return'] = df['close'].pct_change(window)
-    
-    # 2. Bepaal het regime: 1 = Bullish (> +5%), -1 = Bearish (< -5%), 0 = Sideways
-    def classify_regime(val):
-        if pd.isna(val):
-            return 'sideways'
-        if val > threshold:
-            return 'bullish'
-        elif val < -threshold:
-            return 'bearish'
-        else:
-            return 'sideways'
-            
-    df['regime'] = df['cum_return'].apply(classify_regime)
-    df['prev_regime'] = df['regime'].shift(1)
-    
-    clean = df.dropna(subset=['regime', 'prev_regime']).copy()
+    clean = df.dropna(subset=['color', 'prev_color']).copy()
     if len(clean) < 50:
-        return None, "Te weinig data na venster"
+        return None, "Te weinig data voor 4h markov"
 
-    # 3. Bouw de 3x3 Markov transitiematrix (van prev_regime naar regime)
-    states = ['bullish', 'sideways', 'bearish']
-    transition_matrix = pd.crosstab(clean['prev_regime'], clean['regime'], normalize='index')
+    # 2. Bouw de 2x2 transitiematrix (van prev_color naar color)
+    states = ['green', 'red']
+    transition_matrix = pd.crosstab(clean['prev_color'], clean['color'], normalize='index')
+    transition_matrix = transition_matrix.reindex(index=states, columns=states, fill_value=0.5)
     
-    # Zorg dat alle staten (bullish, sideways, bearish) aanwezig zijn in de matrix
-    transition_matrix = transition_matrix.reindex(index=states, columns=states, fill_value=0.33)
-    
-    # Huidige regime van de laatste afgesloten dag
-    current_regime = clean['regime'].iloc[-1]
-    
-    # Haal de overgangskansen op voor de huidige state
-    next_probs = transition_matrix.loc[current_regime].to_dict()
+    # 3. Status van de laatst afgesloten 4h candle
+    current_state = clean['color'].iloc[-1]
+    next_probs = transition_matrix.loc[current_state].to_dict()
     
     return {
-        'current_regime': current_regime,
-        'cum_return_20d_pct': round(float(clean['cum_return'].iloc[-1]) * 100, 2),
-        'probabilities_next_day': {
-            'bullish': round(float(next_probs.get('bullish', 0)) * 100, 2),
-            'sideways': round(float(next_probs.get('sideways', 0)) * 100, 2),
-            'bearish': round(float(next_probs.get('bearish', 0)) * 100, 2),
+        'current_4h_candle': current_state,
+        'probabilities_next_4h': {
+            'green': round(float(next_probs.get('green', 0.5)) * 100, 2),
+            'red': round(float(next_probs.get('red', 0.5)) * 100, 2),
+        },
+        'transition_matrix': {
+            'after_green': {
+                'green': round(float(transition_matrix.loc['green', 'green']) * 100, 2),
+                'red': round(float(transition_matrix.loc['green', 'red']) * 100, 2),
+            },
+            'after_red': {
+                'green': round(float(transition_matrix.loc['red', 'green']) * 100, 2),
+                'red': round(float(transition_matrix.loc['red', 'red']) * 100, 2),
+            }
         },
         'updated_at': time.time()
     }, None
 
-def run_regime_markov_scan():
-    print("--- 📊 Start 20-daagse Markov Regime & Transitie Scan ($\pm 5\%$) ---")
-    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
+def run_4h_markov_scan():
+    print("--- 📊 Start 4h Candle Markov Transitie Scan (Groen/Rood) ---")
+    symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
     
     try:
         EXCHANGE.load_markets()
@@ -78,29 +68,30 @@ def run_regime_markov_scan():
         print(f"Fout bij laden markets: {e}")
         return
 
-    for symbol in core_symbols:
+    for symbol in symbols:
         asset = symbol.split('/')[0].split(':')[0]
-        df = fetch_daily_candles(symbol, limit=400)
-        
+        df = fetch_4h_candles(symbol, limit=1000)
         if df.empty:
             continue
             
-        result, err = compute_regime_markov(df)
+        result, err = compute_4h_candle_markov(df)
         if err:
             print(f"⚠️ {asset}: {err}")
             continue
             
-        filename = f"markov_regime_state_{asset.lower()}.json"
+        filename = f"markov_4h_state_{asset.lower()}.json"
         content_bytes = json.dumps(result, indent=2).encode('utf-8')
         
         with open(filename, 'wb') as f:
             f.write(content_bytes)
             
-        if github_put(filename, content_bytes, message=f"Auto-update Markov regime state {asset} [skip ci]", agent='markov-regime-analyzer'):
-            print(f"📈 {asset} Regime: {result['current_regime'].upper()} (20d return: {result['cum_return_20d_pct']}%) | "
-                  f"Kans op Bullish morgen: {result['probabilities_next_day']['bullish']}%")
+        if github_put(filename, content_bytes, message=f"Auto-update 4h Markov state {asset} [skip ci]", agent='markov-4h-worker'):
+            print(f"📈 {asset} Laatste 4h: {result['current_4h_candle'].upper()} | "
+                  f"Kans op Groene volgende 4h: {result['probabilities_next_4h']['green']}%")
             
         time.sleep(2.0)
 
 if __name__ == '__main__':
-    run_regime_markov_scan()
+    while True:
+        run_4h_markov_scan()
+        time.sleep(3600)  # Elk uur verversen voor actuele 4h stand
