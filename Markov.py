@@ -20,7 +20,8 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
-        self.wfile.write(b"<html><body><h2>📊 Markov Worker is online</h2></body></html>".encode("utf-8"))
+        # Opgelost: Geen b"" prefix meer, zodat .encode() correct werkt zonder SyntaxError
+        self.wfile.write("<html><body><h2>Markov Worker is online</h2></body></html>".encode("utf-8"))
 
     def do_HEAD(self):
         self.send_response(200)
@@ -44,9 +45,9 @@ def push_file_to_github(filename):
         print(f"☁️ Markov state {filename} gepusht naar GitHub.")
 
 
-def calculate_markov_probabilities(df):
+def calculate_markov probabilities(df):
     if df is None or len(df) < 50:
-        return {'green': 50.0, 'red': 50.0}
+        return {'green': 50.0, 'red': 50.0}, 1.0
     
     closes = df['close'].values
     opens = df['open'].values
@@ -63,12 +64,17 @@ def calculate_markov_probabilities(df):
     total_green = transitions[last_color]['green'] + transitions[last_color]['red']
     
     if total_green == 0:
-        return {'green': 50.0, 'red': 50.0}
+        return {'green': 50.0, 'red': 50.0}, 1.0
         
     p_green = (transitions[last_color]['green'] / total_green) * 100.0
     p_red = 100.0 - p_green
     
-    return {'green': round(p_green, 2), 'red': round(p_red, 2)}
+    # Bepaal risico-multiplicator op basis van Markov-zekerheid (hoe verder van 50%, hoe hoger/lager de risico-weging)
+    # Geen hard filter meer, maar een schaalfactor voor de risk/leverage (tussen 0.8x en 1.2x)
+    max_prob = max(p_green, p_red)
+    risk_multiplier = round(float(np.clip(0.8 + (max_prob - 50.0) / 50.0 * 0.4, 0.8, 1.2)), 2)
+    
+    return {'green': round(p_green, 2), 'red': round(p_red, 2)}, risk_multiplier
 
 
 def run_markov_loop():
@@ -83,12 +89,13 @@ def run_markov_loop():
                 continue
             df = df.iloc[:-1].reset_index(drop=True)  # Lopende candle uitsluiten
             
-            probs = calculate_markov_probabilities(df)
+            probs, risk_mult = calculate_markov_probabilities(df)
             
             state = {
                 'updated_at': time.time(),
                 'symbol': symbol,
-                'probabilities_next_4h': probs
+                'probabilities_next_4h': probs,
+                'risk_multiplier': risk_mult  # Beïnvloedt enkel de risico-inzet / leverage, blokkeert geen entries meer
             }
             
             filename = f'markov_state_{asset.lower()}_4h.json'
@@ -96,7 +103,7 @@ def run_markov_loop():
                 json.dump(state, f, indent=2)
                 
             push_file_to_github(filename)
-            print(f"📊 Markov kansen voor {asset}: Groen={probs['green']}% | Rood={probs['red']}%")
+            print(f"📊 Markov voor {asset}: Groen={probs['green']}% | Rood={probs['red']}% | Risk Multiplier={risk_mult}")
             
             # Korte pauze tegen KuCoin rate limits
             time.sleep(2.0)
@@ -106,7 +113,7 @@ def run_markov_loop():
 
 
 if __name__ == '__main__':
-    # Start de mini webserver op de achtergrond voor Render
+    # Start de mini webserver op de achtergrond voor Render (als Web Service)
     threading.Thread(target=run_server, daemon=True).start()
     print("🚀 Markov 4h Worker Web Service gestart met ingebouwde health-check.")
     
