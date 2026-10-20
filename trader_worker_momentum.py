@@ -275,7 +275,7 @@ def manage_open_positions_and_trailing_stops(symbols):
     for sym in to_remove:
         trd = active_trades[sym]
         if not DRY_RUN and open_orders is not None:
-            cancel_orders(exchange, [o for o in open_orders if o.get('symbol'] == sym], PREFIX)
+            cancel_orders(exchange, [o for o in open_orders if o.get('symbol') == sym], PREFIX)
         px = last_price(sym, default=trd.get('entry'))
         log_trade(BOT, 'exit_exchange', sym, trd.get('side', ''), price=px, entry=trd.get('entry'),
                   sl=trd.get('sl'), tp=trd.get('tp'), note='positie gesloten op exchange')
