@@ -358,4 +358,217 @@ def walk_forward_eval(X, y):
         'skill': ens_mae / zero_mae,
         'dir_acc': dir_acc,
         'dir_z': _z_vs_half(dir_acc, len(y_all)),
-        'clf_acc': clf_acc
+        'clf_acc': clf_acc,
+        'joint_n': joint_n,
+        'joint_acc': joint_acc,
+        'joint_z': _z_vs_half(joint_acc, joint_n) if joint_n else None,
+        'holdout_n': int(len(y_all)),
+    }
+
+
+def score_config(df, feats_wanted, lookback):
+    feats = usable_features(df, feats_wanted)
+    if not feats:
+        return None
+    ds = build_dataset(df, feats, lookback)
+    if ds is None:
+        return None
+    X, y, _ = ds
+    res = walk_forward_eval(X, y)
+    if res is not None:
+        res['features_used'] = feats
+    return res
+
+
+def _insufficient(state, now):
+    state.update({
+        'data_status': 'insufficient_data',
+        'signal': 'none',
+        'signal_probability': 50.0,
+        'last_prediction': None,
+        'last_prediction_price': None,
+        'last_trained_timestamp': now,
+        'last_candle_ts': 0,
+        'updated_at': int(now)
+    })
+    return state
+
+
+def process(df_raw, state, now, symbol, tf_info):
+    if len(df_raw) < MIN_FEATURE_ROWS:
+        return _insufficient(state, now), False
+
+    df = compute_features(df_raw)
+    regime = get_market_regime(df)
+    state['current_regime'] = regime
+
+    lookback = tf_info['lookback']
+    res = score_config(df, base_features, lookback)
+
+    if res is None:
+        return _insufficient(state, now), False
+
+    feats = res['features_used']
+    ds = build_dataset(df, feats, lookback)
+    if ds is None:
+        return _insufficient(state, now), False
+
+    X, y, latest = ds
+    weights = res['weights']
+
+    pred_ret = {}
+    latest_arr = latest.to_numpy()
+    if latest_arr.ndim == 1:
+        latest_arr = latest_arr.reshape(1, -1)
+
+    for name, model in make_regressors().items():
+        model.fit(X, y)
+        pred_ret[name] = float(model.predict(latest_arr)[0])
+    ens_ret = float(sum(weights[k] * pred_ret[k] for k in pred_ret))
+
+    prob_up = 50.0
+    y_cls = (y > 0).astype(int)
+    if len(np.unique(y_cls)) == 2:
+        try:
+            clf = make_classifier()
+            clf.fit(X, y_cls)
+            prob_up = float(clf.predict_proba(latest_arr)[0][1] * 100)
+        except Exception as e:
+            print(f"⚠️ Classifier-fit mislukt voor {symbol}: {e}")
+            prob_up = 50.0
+
+    last_close = float(df['close'].iloc[-1])
+    atr = df['ATR'].iloc[-1]
+    atr = float(atr) if pd.notna(atr) and atr > 0 else last_close * 0.02
+    last_candle_timestamp = int(df['timestamp'].iloc[-1]) if not df.empty else 0
+
+    joint_z = res['joint_z']
+    has_edge = (
+        res['skill'] < 1.0
+        and res['joint_n'] >= QUANT_MIN_JOINT_N
+        and joint_z is not None
+        and joint_z >= QUANT_MIN_Z
+    )
+
+    reg_up = ens_ret > 0
+    clf_up = prob_up >= 52.0
+    clf_down = prob_up <= 48.0
+
+    signal, sig_prob = 'none', 50.0
+    if has_edge:
+        if reg_up and clf_up:
+            signal, sig_prob = 'long', prob_up
+        elif (not reg_up) and clf_down:
+            signal, sig_prob = 'short', 100.0 - prob_up
+
+    funding_rate, open_interest = 0.0, 0.0
+    if has_edge:
+        funding_rate, open_interest = fetch_futures_market_context(symbol)
+
+    if signal == 'long' and funding_rate > 0.0005:
+        signal, sig_prob = 'none', 50.0
+    elif signal == 'short' and funding_rate < -0.0005:
+        signal, sig_prob = 'none', 50.0
+
+    sign = 1 if reg_up else -1
+
+    state.update({
+        'active_features': feats,
+        'model_weights': weights,
+        'model_errors': res['maes'],
+        'baseline_error': res['skill'],
+        'holdout_direction_accuracy': res['dir_acc'],
+        'holdout_direction_z': res['dir_z'],
+        'holdout_classifier_accuracy': res['clf_acc'],
+        'holdout_samples': res['holdout_n'],
+        'joint_signal_accuracy': res['joint_acc'],
+        'joint_signal_samples': res['joint_n'],
+        'joint_signal_z': joint_z,
+        'funding_rate': funding_rate,
+        'open_interest': open_interest,
+        'last_close': last_close,
+        'last_prediction': last_close * (1.0 + ens_ret),
+        'last_prediction_price': last_close * (1.0 + ens_ret),
+        'predicted_return_pct': ens_ret * 100.0,
+        'direction_probability': prob_up,
+        'signal': signal,
+        'signal_probability': sig_prob,
+        'atr': atr,
+        'atr_pct': atr / last_close * 100.0,
+        'stop_loss': (last_close - sign * SL_ATR_MULT * atr) if signal != 'none' else 0.0,
+        'take_profit': (last_close + sign * TP_ATR_MULT * atr) if signal != 'none' else 0.0,
+        'data_status': 'ok' if has_edge else 'insufficient_data',
+        'last_trained_timestamp': now,
+        'last_candle_ts': last_candle_timestamp,
+        'updated_at': int(now),
+    })
+    return state, has_edge
+
+
+def push_to_github(files):
+    if not os.environ.get('GITHUB_TOKEN') or not files:
+        return
+    for fname in files:
+        try:
+            with open(fname, 'rb') as f:
+                content = f.read()
+            github_put(fname, content, agent='v20-quant-worker')
+            time.sleep(1.0)
+        except Exception as e:
+            print(f"❌ Push van {fname} mislukt: {e}")
+
+
+def main():
+    threading.Thread(target=run_server, daemon=True).start()
+    print("🚀 Quant Worker Web Service gestart met ingebouwde health-check op poort 10000.")
+
+    while True:
+        try:
+            print("🔄 Start automatische marktscan via getcoins.py...")
+            subprocess.run(["python", "getcoins.py"], check=True)
+            print("✅ Marktscan succesvol voltooid.")
+            push_file_to_github('kucoin_best_coins_ranking.csv')
+            time.sleep(2.0)
+        except Exception as e:
+            print(f"⚠️ Kon getcoins.py niet uitvoeren: {e}.")
+            time.sleep(2.0)
+
+        symbols_scope = get_combined_trading_assets()
+
+        written = []
+        for symbol in symbols_scope:
+            asset = symbol.split('/')[0].split(':')[0]
+
+            for tf_name, tf_info in timeframes.items():
+                state_file = f'model_state_{asset.lower()}_{tf_name}.json'
+                try:
+                    now = time.time()
+                    state = load_or_init_state(state_file)
+                    if now - state.get('last_trained_timestamp', 0) < tf_info['min_interval_seconds']:
+                        continue
+                    
+                    df_raw = fetch_data_safely(symbol, tf_info)
+                    if df_raw.empty:
+                        continue
+
+                    state, ok = process(df_raw, state, now, symbol, tf_info)
+                    save_state(state_file, state)
+                    written.append(state_file)
+                    print(f"📊 Futures Quant {asset} {tf_name}: status={state['data_status']} signal={state['signal']} "
+                          f"funding={state.get('funding_rate', 0):.5f} joint_z={state.get('joint_signal_z')} rows={len(df_raw)}")
+                    gc.collect()
+                    time.sleep(2.0)
+                except Exception as e:
+                    print(f"❌ Fout bij {asset} ({tf_name}): {e}")
+                    gc.collect()
+                    time.sleep(2.0)
+        
+        push_to_github(written)
+        
+        sleep_seconds = seconds_until_next_run()
+        print(f"💤 Wachten tot de volgende 4h candle cyclus (over {int(sleep_seconds // 60)} minuten)...")
+        time.sleep(sleep_seconds)
+
+
+if __name__ == '__main__':
+    main()
