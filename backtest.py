@@ -256,9 +256,13 @@ def show(tr, title):
         for col in ('signal_ts', 'entry_ts', 'exit_ts'):
             out[col] = pd.to_datetime(out[col], unit='ms')
         st.dataframe(out, width="stretch")
-        st.download_button("⬇️ Download trades (CSV)", out.to_csv(index=False).encode('utf-8'),
-                           file_name=f"trades_{title.split()[0].lower()}.csv", mime="text/csv")
-
+        st.download_button(
+    "📥 Download trades (CSV)", 
+    out.to_csv(index=False).encode('utf-8'),
+    file_name=f"trades_{title.split()[0].lower()}.csv", 
+    mime="text/csv",
+    key=f"download_btn_{title.split()[0].lower()}"  # <--- Voeg deze unieke key toe!
+)
 
 tab_v20, tab_twm, tab_notes = st.tabs(["🛡️ V20 Trend-Pullback", "🚀 TWM Reversal", "ℹ️ Aannames & beperkingen"])
 
