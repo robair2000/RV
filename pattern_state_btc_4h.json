@@ -13,13 +13,13 @@
   "adx_4h": 29.9,
   "volume_expansion_ratio": 0.7,
   "sma20": 81777.345,
-  "meta_status": "meta-gate gesloten: AUC 0.540 niet significant (z=0.52 < 1.28)",
+  "meta_status": "meta-gate gesloten: OOS-EV niet positief boven drempel (n=0, gem. R=None)",
   "meta_prob": null,
-  "meta_threshold": 0.2948,
-  "meta_auc": 0.5396,
-  "meta_z": 0.52,
-  "meta_events": 1001,
-  "breakeven_prob": 0.2448,
+  "meta_threshold": 0.2955,
+  "meta_auc": 0.6806,
+  "meta_z": 1.91,
+  "meta_events": 723,
+  "breakeven_prob": 0.2455,
   "last_candle_ts": 1792468800,
-  "updated_at": 1792484274.2687802
+  "updated_at": 1792486232.865428
 }
