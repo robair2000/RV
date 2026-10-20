@@ -7,6 +7,7 @@ Belangrijk:
   Type 'stop' bestaat niet in de KuCoin-API.
 """
 import time
+import math
 
 
 def _cid(order):
@@ -106,3 +107,40 @@ def replace_protective_orders(exchange, symbol, side, contracts, sl, tp, prefix)
         except Exception as e:
             print(f"⚠️ {prefix}: take-profit plaatsen voor {symbol} mislukt (software-TP blijft actief): {e}")
     return True
+
+
+def find_protective_levels(open_orders, symbol, prefix="v20_"):
+    sl_price = None
+    tp_price = None
+    for o in open_orders:
+        if o.get('symbol') != symbol:
+            continue
+        cid = _cid(o)
+        if prefix + 'sl_' in cid:
+            trig = o.get('stopPrice') or (o.get('info') or {}).get('stopPrice') or (o.get('info') or {}).get('triggerPrice')
+            if trig:
+                sl_price = float(trig)
+        elif prefix + 'tp_' in cid:
+            price = o.get('price')
+            if price:
+                tp_price = float(price)
+    return sl_price, tp_price
+
+
+def describe_sizing(exchange, symbols, trade_amount_usdt, leverage):
+    results = []
+    for symbol in symbols:
+        try:
+            market = exchange.market(symbol)
+            contract_size = float(market.get('contractSize') or 1.0)
+            min_amount = float(market.get('limits', {}).get('amount', {}).get('min') or 1.0)
+            ticker = exchange.fetch_ticker(symbol)
+            price = float(ticker['last'])
+            per_contract = price * contract_size
+            target = trade_amount_usdt * leverage
+            lots = math.floor(target / per_contract)
+            ok = lots >= max(1, min_amount)
+            results.append((symbol, per_contract, ok))
+        except Exception:
+            results.append((symbol, None, None))
+    return results
