@@ -78,7 +78,8 @@ def get_dashboard_trading_assets(top_n=5):
         options[label] = asset
     return options
 
-asset_options = get_dashboard_trading_assets(top_n=5)
+# Zelfde scope als de bots (SCAN_TOP_N, standaard 1), zodat het dashboard geen assets toont die niet verhandeld worden
+asset_options = get_dashboard_trading_assets(top_n=int(os.environ.get('SCAN_TOP_N', 1)))
 
 interval_options = {
     '4 Uur (Macro Swing)': {'interval': '4h', 'limit': 500, 'code': '4h'},
