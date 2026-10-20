@@ -1,0 +1,16 @@
+{
+  "pattern_score": 50.0,
+  "pattern_signal": "none",
+  "twm_signal": "none",
+  "twm_score": 50.0,
+  "recommended_leverage": 1,
+  "strictness_mode": "squeeze_breakout_markov_4h",
+  "atr_pct": 3.9915966386554613,
+  "adx_4h": 18.6019569658318,
+  "volume_expansion_ratio": 1.5849181036270803,
+  "sma20": 4.893000000000001,
+  "meta_status": "no_setup",
+  "meta_prob": null,
+  "last_candle_ts": 1792512000,
+  "updated_at": 1792529442.3240135
+}
