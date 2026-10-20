@@ -1,18 +1,18 @@
 {
-  "current_4h_candle": "green",
+  "current_4h_candle": "red",
   "probabilities_next_4h": {
-    "green": 44.88,
-    "red": 55.12
+    "green": 51.71,
+    "red": 48.29
   },
   "transition_matrix": {
     "after_green": {
-      "green": 44.88,
-      "red": 55.12
+      "green": 40.29,
+      "red": 59.71
     },
     "after_red": {
-      "green": 52.94,
-      "red": 47.06
+      "green": 51.71,
+      "red": 48.29
     }
   },
-  "updated_at": 1792529369.0208025
+  "updated_at": 1792533030.2423832
 }
