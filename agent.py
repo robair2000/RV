@@ -83,8 +83,8 @@ META_FEATURES = [
 ]
 
 
-def get_combined_trading_assets(top_n=5):
-    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
+def get_combined_trading_assets(top_n=1):
+    core_symbols = ['BTC/USDT:USDT']  # Je vaste veilige kern
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_symbols = []
 
@@ -92,10 +92,11 @@ def get_combined_trading_assets(top_n=5):
         try:
             df = pd.read_csv(ranking_file)
             if 'Symbol' in df.columns:
-                for s in df['Symbol'].head(top_n).tolist():
+                # Pak alleen de allersterkste nummer 1!
+                for s in df['Symbol'].head(1).tolist():
                     if s not in dynamic_symbols and ':USDT' in s:
                         dynamic_symbols.append(s)
-            print(f"📈 Dynamische top {top_n} ingeladen voor agent: {dynamic_symbols}")
+            print(f"📈 Dynamische nummer 1 ingeladen: {dynamic_symbols}")
         except Exception as e:
             print(f"⚠️ Fout bij lezen van ranking CSV in agent: {e}")
 
