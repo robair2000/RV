@@ -15,11 +15,11 @@
   "sma20": 4.034114999999999e-06,
   "meta_status": "no_setup",
   "meta_prob": null,
-  "meta_threshold": 0.2953,
-  "meta_auc": 0.5327,
-  "meta_z": 0.39,
-  "meta_events": 881,
-  "breakeven_prob": 0.2453,
+  "meta_threshold": 0.2946,
+  "meta_auc": 0.4621,
+  "meta_z": -0.56,
+  "meta_events": 1154,
+  "breakeven_prob": 0.2446,
   "last_candle_ts": 1792497600,
-  "updated_at": 1792513569.9425213
+  "updated_at": 1792517438.041226
 }
