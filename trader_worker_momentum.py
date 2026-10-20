@@ -8,6 +8,7 @@ import ccxt
 import pandas as pd
 
 from github_utils import github_pull, github_put
+from asset_utils import get_combined_trading_assets
 from order_utils import (fetch_all_open_orders, cancel_orders, create_stop_loss, 
                          create_take_profit, replace_stop_loss, replace_protective_orders)
 from risk_utils import DailyLossGuard, log_trade, DAILY_LOSS_CLOSE_POSITIONS
@@ -25,7 +26,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
             
             html = "<html><head><title>Squeeze Breakout Sniper</title></head><body style='font-family: Arial; padding: 20px; background-color: #0f172a; color: #f8fafc;'>"
-            html += "<h2 style='color: #38bdf8;'>🚀 Squeeze & Breakout Sniper (Live Trader)</h2>"
+            html += "<h2 style='color: #38bdf8;'>🚀 Squeeze & Breakout Sniper (Live Trader - Gehard)</h2>"
             
             ranking_file = 'kucoin_best_coins_ranking.csv'
             if os.path.exists(ranking_file):
@@ -65,24 +66,6 @@ def pull_latest_states_from_github(symbols):
         github_pull(f'pattern_state_{asset.lower()}_4h.json', min_interval=STATE_PULL_INTERVAL, agent=AGENT)
 
 
-def get_combined_trading_assets(top_n=1):
-    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
-    ranking_file = 'kucoin_best_coins_ranking.csv'
-    dynamic_symbols = []
-
-    if os.path.exists(ranking_file):
-        try:
-            df = pd.read_csv(ranking_file)
-            if 'Symbol' in df.columns:
-                for s in df['Symbol'].head(top_n).tolist():
-                    if s not in dynamic_symbols and ':USDT' in s:
-                        dynamic_symbols.append(s)
-        except Exception as e:
-            print(f"⚠️ Fout bij lezen van ranking CSV: {e}")
-
-    return list(dict.fromkeys(core_symbols + dynamic_symbols))
-
-
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
 MIN_SCORE = float(os.environ.get('MIN_BOSS_SCORE', 75.0))
 COOLDOWN_SECONDS = int(os.environ.get('COOLDOWN_SECONDS', 3600))
@@ -92,7 +75,7 @@ DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 
 MAX_CONCURRENT_POSITIONS = int(os.environ.get('MAX_CONCURRENT_POSITIONS', 5))
 SL_ATR_MULT = 1.5
-TP_ATR_MULT = 3.0  # Uitbraak target op ATR i.p.v. SMA20
+TP_ATR_MULT = 3.0
 
 MAX_STATE_AGE_SECONDS = 8 * 3600
 MAX_CANDLE_AGE_SECONDS = float(os.environ.get('MAX_CANDLE_AGE_HOURS', 5.5)) * 3600
@@ -217,8 +200,9 @@ def close_position(symbol, side, contracts):
 def manage_open_positions_and_trailing_stops(symbols):
     try:
         positions = execute_with_retry(lambda: exchange.fetch_positions())
-    except Exception:
-        return
+    except Exception as e:
+        print(f"⚠️ TWM: posities ophalen mislukt (API-hickup overgeslagen): {e}")
+        return  # Belangrijk: bij falen slaan we de ronde over i.p.v. lege state weggooien!
 
     try:
         open_orders = fetch_all_open_orders(exchange)
@@ -226,7 +210,7 @@ def manage_open_positions_and_trailing_stops(symbols):
         open_orders = None
 
     open_symbols = set()
-    state_changed = false = False
+    state_changed = False  # Schoon en zonder typfouten
 
     for pos in positions:
         contracts = abs(float(pos.get('contracts') or 0))
@@ -258,7 +242,7 @@ def manage_open_positions_and_trailing_stops(symbols):
         distance_in_atr = sgn * (price - entry) / atr if atr > 0 else 0.0
         old_sl = trade['sl']
 
-        # Breakeven schuiven bij winst > 1.5 ATR
+        # Breakeven schuiven bij winst >= 1.5 ATR
         if distance_in_atr >= 1.5 and not trade.get('breakeven_secured', False):
             if side == 'long' and trade['sl'] < entry:
                 trade['sl'] = entry
@@ -288,6 +272,7 @@ def manage_open_positions_and_trailing_stops(symbols):
                 active_trades.pop(symbol, None)
                 state_changed = True
 
+    # Alleen verwijderen als de exchange-respons gegarandeerd succesvol was en de positie echt weg is
     to_remove = [sym for sym in active_trades if sym not in open_symbols]
     for sym in to_remove:
         trd = active_trades[sym]
@@ -423,7 +408,6 @@ def evaluate_and_trade_breakout(asset, symbol):
     sgn = 1 if is_long else -1
     position_side = 'long' if is_long else 'short'
 
-    # ATR gebaseerde Stop Loss en Take Profit voor uitbraken
     risk = SL_ATR_MULT * atr
     reward = TP_ATR_MULT * atr
 
@@ -486,7 +470,8 @@ if __name__ == '__main__':
     while True:
         try:
             pull_ranking_from_github()
-            current_symbols = get_combined_trading_assets(top_n=5)
+            # Gebruikt nu netjes de centrale helper i.p.v. dubbele code
+            current_symbols = get_combined_trading_assets()
             manage_open_positions_and_trailing_stops(current_symbols)
             execute_live_trades_scan(current_symbols)
         except Exception as e:
