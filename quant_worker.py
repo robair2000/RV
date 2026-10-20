@@ -36,8 +36,8 @@ def push_file_to_github(filename):
 
 
 # --- STAP 1: DYNAMISCHE ASSET SELECTIE ---
-def get_combined_trading_symbols(top_n=5):
-    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']
+def get_combined_trading_assets(top_n=1):
+    core_symbols = ['BTC/USDT:USDT']  # Je vaste veilige kern
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_symbols = []
 
@@ -45,15 +45,16 @@ def get_combined_trading_symbols(top_n=5):
         try:
             df = pd.read_csv(ranking_file)
             if 'Symbol' in df.columns:
-                for s in df['Symbol'].head(top_n).tolist():
+                # Pak alleen de allersterkste nummer 1!
+                for s in df['Symbol'].head(1).tolist():
                     if s not in dynamic_symbols and ':USDT' in s:
                         dynamic_symbols.append(s)
-            print(f"📈 Dynamische top {top_n} geladen uit scanner: {dynamic_symbols}")
+            print(f"📈 Dynamische nummer 1 ingeladen: {dynamic_symbols}")
         except Exception as e:
-            print(f"⚠️ Fout bij lezen van ranking CSV: {e}")
+            print(f"⚠️ Fout bij lezen van ranking CSV in agent: {e}")
 
     combined = list(dict.fromkeys(core_symbols + dynamic_symbols))
-    print(f"🎯 Definitieve actieve trading scope ({len(combined)} symbols): {combined}")
+    print(f"🎯 Actieve agent trading scope ({len(combined)} symbols): {combined}")
     return combined
 
 
