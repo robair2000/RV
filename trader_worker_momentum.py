@@ -69,7 +69,8 @@ def pull_latest_states_from_github(symbols):
 
 
 def get_combined_trading_assets(top_n=1):
-    core_symbols = ['BTC/USDT:USDT']  # Je vaste veilige kern
+    # Al je core-munten weer teruggezet
+    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']  
     ranking_file = 'kucoin_best_coins_ranking.csv'
     dynamic_symbols = []
 
@@ -77,7 +78,7 @@ def get_combined_trading_assets(top_n=1):
         try:
             df = pd.read_csv(ranking_file)
             if 'Symbol' in df.columns:
-                # Pak alleen de allersterkste nummer 1!
+                # Pak alleen de allersterkste nummer 1 uit de ranking!
                 for s in df['Symbol'].head(1).tolist():
                     if s not in dynamic_symbols and ':USDT' in s:
                         dynamic_symbols.append(s)
@@ -88,7 +89,6 @@ def get_combined_trading_assets(top_n=1):
     combined = list(dict.fromkeys(core_symbols + dynamic_symbols))
     print(f"🎯 Actieve agent trading scope ({len(combined)} symbols): {combined}")
     return combined
-
 
 TRADE_AMOUNT_USDT = float(os.environ.get('TRADE_AMOUNT_USDT', 20.0))
 # Eigen variabele voor TWM, zodat de V20-drempel (MIN_BOSS_SCORE) in een gedeelde env-groep TWM niet stilzet
