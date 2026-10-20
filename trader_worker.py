@@ -101,7 +101,9 @@ MAX_CONCURRENT_POSITIONS = int(os.environ.get('MAX_CONCURRENT_POSITIONS', 5))
 MIN_RRR = 3.0
 TP_ATR_mult_BASE = 5.0
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
-MAX_CANDLE_AGE_SECONDS = 8.75 * 3600  # 4h bar + 4h buffer + marge
+# last_candle_ts = OPEN-tijd van de laatst gesloten 4h-candle, dus een vers signaal is al ~4h oud.
+# 5.5u = 4h + agent-scaninterval (30 min) + pull-interval + marge; ouder = signaal van 2 candles terug.
+MAX_CANDLE_AGE_SECONDS = float(os.environ.get('MAX_CANDLE_AGE_HOURS', 5.5)) * 3600
 # Een limit-entry geldt maar voor de candle waarop het signaal gebaseerd is (default 1 x 4h)
 PENDING_ORDER_TTL_SECONDS = int(os.environ.get('PENDING_ORDER_TTL_SECONDS', 4 * 3600))
 
@@ -577,9 +579,8 @@ def evaluate_and_trade(asset, symbol):
     effective_tp_mult = max(TP_ATR_mult_BASE, boss_trailing_mult * (MIN_RRR + 0.2))
     take_profit_val = limit_price + sgn * effective_tp_mult * atr
 
-    if not ensure_margin_and_leverage(symbol, boss_leverage):
-        return
-
+    # Eerst sizing: als 1 contract al groter is dan de notional slaan we over, ZONDER margin/leverage
+    # van dit symbool (en dus van een eventuele bestaande positie/andere bot) aan te raken.
     amount = compute_contract_amount(asset, symbol, limit_price, boss_leverage)
     if amount is None:
         return
@@ -587,6 +588,9 @@ def evaluate_and_trade(asset, symbol):
     side = 'buy' if is_long else 'sell'
     if DRY_RUN:
         print(f"   🧪 [DRY RUN V20] Zou limit order plaatsen: {side} {amount}x {symbol} @ {limit_price} (score {boss_score} >= {min_score_req})")
+        return
+
+    if not ensure_margin_and_leverage(symbol, boss_leverage):
         return
 
     try:
