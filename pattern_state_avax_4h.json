@@ -9,10 +9,10 @@
   "effective_tp_mult": 8.0,
   "min_score_required": 75.0,
   "strictness_mode": "trend_pullback_meta_labeled",
-  "atr_pct": 2.44,
-  "adx_4h": 29.69,
-  "volume_expansion_ratio": 1.41,
-  "sma20": 9.671899999999999,
+  "atr_pct": 2.43,
+  "adx_4h": 27.88,
+  "volume_expansion_ratio": 0.74,
+  "sma20": 9.655850000000001,
   "meta_status": "meta-gate gesloten: AUC 0.462 niet significant (z=-0.56 < 1.28)",
   "meta_prob": null,
   "meta_threshold": 0.2946,
@@ -20,6 +20,6 @@
   "meta_z": -0.56,
   "meta_events": 1154,
   "breakeven_prob": 0.2446,
-  "last_candle_ts": 1792497600,
-  "updated_at": 1792517431.147061
+  "last_candle_ts": 1792512000,
+  "updated_at": 1792526702.9367638
 }
