@@ -73,7 +73,7 @@ DESIRED_MARGIN_MODE = os.environ.get('MARGIN_MODE', 'cross')
 DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() in ('1', 'true', 'yes')
 
 MAX_CONCURRENT_POSITIONS = int(os.environ.get('MAX_CONCURRENT_POSITIONS', 5))
-MAX_SAME_DIRECTION = int(os.environ.get('MAX_SAME_DIRECTION', 0))
+MAX_SAME_DIRECTION = int(os.environ.get('MAX_SAME_DIRECTION', 2))
 
 MAX_STATE_AGE_SECONDS = {'4h': 8 * 3600, '1d': 48 * 3600}
 MAX_CANDLE_AGE_SECONDS = float(os.environ.get('MAX_CANDLE_AGE_HOURS', 5.5)) * 3600
@@ -283,6 +283,18 @@ def manage_open_positions_and_trailing_stops(symbols):
             print(f"🚀 Limit order gevuld voor {symbol} ({contracts} contracten)!")
             if not DRY_RUN and open_orders is not None:
                 cancel_orders(exchange, [o for o in open_orders if o.get('symbol') == symbol], f"{PREFIX}entry_")
+            
+            # --- STOP-FAIL SAFETY & KILL SWITCH ---
+            try:
+                if not DRY_RUN:
+                    replace_stop_loss(exchange, symbol, side, contracts, trade['sl'], PREFIX)
+            except Exception as sl_err:
+                print(f"🚨 KRITIEKE STOP-FAIL voor {symbol}: {sl_err}. Positie wordt onmiddellijk gesloten (Kill-Switch).")
+                close_position(symbol, side, contracts)
+                active_trades.pop(symbol, None)
+                state_changed = True
+                continue
+
             trade['status'] = 'open'
             state_changed = True
             log_trade(BOT, 'entry_filled', symbol, side, price=entry, amount=contracts, entry=entry, sl=trade['sl'], tp=trade['tp'])
@@ -329,6 +341,7 @@ def manage_open_positions_and_trailing_stops(symbols):
                 active_trades.pop(symbol, None)
                 state_changed = True
 
+    # --- MAX CHASE & PENDING TTL CHECK ---
     entry_order_symbols = None
     if open_orders is not None:
         entry_order_symbols = {o.get('symbol') for o in open_orders
@@ -341,6 +354,18 @@ def manage_open_positions_and_trailing_stops(symbols):
         age = now - trd.get('created_at', now)
         if trd.get('status') == 'pending':
             has_order = True if entry_order_symbols is None else (sym in entry_order_symbols)
+            
+            # Max chase check: annuleer als prijs te ver wegloopt (> 0.5 ATR)
+            cur_px = last_price(sym)
+            if cur_px and trd.get('atr') and trd.get('entry'):
+                chase_dist = abs(cur_px - trd['entry']) / trd['atr']
+                if chase_dist > 0.5:
+                    print(f"🏃‍♂️ Max chase bereikt voor {sym} (prijs te ver bewogen). Order geannuleerd.")
+                    if not DRY_RUN and open_orders is not None:
+                        cancel_orders(exchange, [o for o in open_orders if o.get('symbol') == sym], f"{PREFIX}entry_")
+                    to_remove.append(sym)
+                    continue
+
             if has_order and age > PENDING_ORDER_TTL_SECONDS:
                 if not DRY_RUN and open_orders is not None:
                     cancel_orders(exchange, [o for o in open_orders if o.get('symbol') == sym], f"{PREFIX}entry_")
@@ -349,7 +374,6 @@ def manage_open_positions_and_trailing_stops(symbols):
                 to_remove.append(sym)
         elif trd.get('status') == 'open':
             if not DRY_RUN and open_orders is not None:
-                # GECORRIGEERD: bracket fout opgelost van o.get('symbol'] naar o.get('symbol')
                 cancel_orders(exchange, [o for o in open_orders if o.get('symbol') == sym], PREFIX)
             px = last_price(sym, default=trd.get('entry'))
             log_trade(BOT, 'exit_exchange', sym, trd.get('side', ''), price=px, entry=trd.get('entry'), sl=trd.get('sl'), tp=trd.get('tp'))
@@ -452,10 +476,12 @@ def evaluate_and_trade(asset, symbol):
     is_long = (quant_signal == 'long')
     sgn = 1 if is_long else -1
 
-    stop_loss_val = float(state_4h.get('stop_loss', price - sgn * 2.5 * atr))
-    take_profit_val = float(state_4h.get('take_profit', price + sgn * 5.0 * atr))
-
+    # Bepaal limietkoers
     limit_price = price - (0.2 * atr) if is_long else price + (0.2 * atr)
+
+    # --- SL & TP CORRECT BEREKENEN VANAF DE LIMIETKOERS ---
+    stop_loss_val = limit_price - sgn * 2.5 * atr
+    take_profit_val = limit_price + sgn * 5.0 * atr
 
     leverage = 2
     amount = compute_contract_amount(symbol, limit_price, target_notional=TRADE_AMOUNT_USDT * leverage)
@@ -498,7 +524,7 @@ def evaluate_and_trade(asset, symbol):
             'protected_contracts': None,
         }
         log_trade(BOT, 'entry_order', symbol, quant_signal, price=limit_price, amount=amount,
-                  entry=limit_price, sl=stop_loss_val, tp=take_profit_val, note='quant-only signal')
+                  entry=limit_price, sl=stop_loss_val, tp=take_profit_val, note='quant-only signal with limit-relative SL/TP')
         push_trader_status_to_github()
     except Exception as e:
         print(f"❌ Fout bij plaatsen quant order voor {symbol}: {e}")
