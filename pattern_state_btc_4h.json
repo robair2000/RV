@@ -1,9 +1,16 @@
 {
-  "updated_at": 1792532101.3273647,
-  "last_candle_ts": 1792497600000,
-  "pattern_signal": "none",
   "pattern_score": 50.0,
-  "recommended_leverage": 2,
-  "atr_pct": 2.0,
-  "min_score_required": 75.0
+  "pattern_signal": "none",
+  "twm_signal": "none",
+  "twm_score": 50.0,
+  "recommended_leverage": 1,
+  "strictness_mode": "squeeze_breakout_markov_4h",
+  "atr_pct": 1.0630288599082318,
+  "adx_4h": 27.517719486567962,
+  "volume_expansion_ratio": 0.8931976521013444,
+  "sma20": 81868.36000000002,
+  "meta_status": "no_setup",
+  "meta_prob": null,
+  "last_candle_ts": 1792512000,
+  "updated_at": 1792533145.9277928
 }
