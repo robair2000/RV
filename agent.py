@@ -2,15 +2,14 @@ import os
 import json
 import time
 import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import numpy as np
 import pandas as pd
 import ccxt
-import xgboost as xgb
-from sklearn.model_selection import KFold
-from sklearn.metrics import roc_auc_score
 
 from github_utils import github_put
-from market_utils import fetch_ohlcv_paginated, fetch_cached_1d_shared
+from market_utils import fetch_ohlcv_paginated
 from asset_utils import get_combined_trading_assets
 
 # --- Configuraties & Constanten ---
@@ -23,6 +22,27 @@ META_TP_ATR = 3.0
 MIN_BOSS_SCORE = 75.0
 
 exchange = ccxt.kucoinfutures({'enableRateLimit': True})
+
+
+# --- Mini Webserver voor Render (Voorkomt 'No open ports detected' crash) ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"<html><body><h2>🚀 Squeeze Agent is online</h2></body></html>")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Voorkomt spam in de logs
+
+
+def run_server():
+    port = int(os.environ.get("PORT", 10000))
+    HTTPServer(("0.0.0.0", port), HealthCheckHandler).serve_forever()
 
 
 def push_file_to_github(filename):
@@ -55,14 +75,11 @@ def compute_indicators(df):
     sma20 = close.rolling(20).mean()
     std20 = close.rolling(20).std()
     
-    # Bollinger Squeeze & Width Percentile
     bb_width = (sma20 + (std20 * 2) - (sma20 - (std20 * 2))) / sma20
     df['bb_width_pctl'] = bb_width.rolling(100).rank(pct=True)
     
-    # Volume ratio
     df['vol_ratio'] = df['volume'] / (df['volume'].rolling(20).mean() + 1e-8)
     
-    # ATR
     tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
     df['atr'] = tr.rolling(14).mean()
     df['atr_pct'] = (df['atr'] / close) * 100.0
@@ -76,22 +93,19 @@ def compute_primary_setups(d4, d1, markov_data=None):
         return pd.DataFrame()
 
     setups = []
-    for i in range(50, len(df) - 1): # Exclude lopende candle (-1)
+    for i in range(50, len(df) - 1):  # Lopende candle uitsluiten
         row = df.iloc[i]
         
-        # Squeeze & Volume filter
         is_squeeze = row['bb_width_pctl'] <= SQUEEZE_PCTL
         has_volume = row['vol_ratio'] >= MIN_VOL_RATIO
         
         if not (is_squeeze and has_volume):
             continue
 
-        # Richting op basis van momentum / close ten opzichte van SMA20
         close = row['close']
         sma20 = d4['close'].rolling(20).mean().iloc[i]
         signal = 'long' if close > sma20 else 'short'
 
-        # Markov filter check (min 52% kans)
         if markov_data:
             prob = markov_data.get('green' if signal == 'long' else 'red', 50.0)
             if prob < 52.0:
@@ -109,11 +123,6 @@ def compute_primary_setups(d4, d1, markov_data=None):
     return pd.DataFrame(setups)
 
 
-def walk_forward_gate(histories):
-    # Dummy / basis walk-forward validatie voor de meta-gate
-    return {'ok': True, 'threshold': 0.52, 'auc': 0.65, 'z': 2.1, 'n_events': 100}
-
-
 def run_agent_scan():
     try:
         subprocess.run(["python", "getcoins.py"], check=True)
@@ -127,11 +136,11 @@ def run_agent_scan():
     for symbol in symbols:
         asset = symbol.split('/')[0].split(':')[0]
         try:
-            # Voldoende historie ophalen zoals geadviseerd
+            print(Bezig met ophalen en scannen van {symbol}...)
             d4 = fetch_ohlcv_paginated(exchange, symbol, '4h', total_bars=META_HISTORY_4H)
             if d4 is None or len(d4) < 100:
                 continue
-            d4 = d4.iloc[:-1].reset_index(drop=True) # Lopende candle uitsluiten
+            d4 = d4.iloc[:-1].reset_index(drop=True)
 
             markov_probs = load_markov_state(asset)
             setups = compute_primary_setups(d4, None, markov_data=markov_probs)
@@ -143,7 +152,7 @@ def run_agent_scan():
             if not setups.empty:
                 last_setup = setups.iloc[-1]
                 latest_signal = last_setup['signal']
-                score = 80.0  # Voorbeeld score bij valide squeeze setup
+                score = 80.0
                 leverage = 3 if score >= 85 else 2
 
             state = {
@@ -164,6 +173,9 @@ def run_agent_scan():
             written.append(filename)
             print(f"🚀 Squeeze Agent geüpdatet voor {asset}: signal={latest_signal}")
 
+            # Cruciaal: rustpauze tussen munten om KuCoin rate limits (429) te voorkomen
+            time.sleep(3.0)
+
         except Exception as e:
             print(f"❌ Fout bij agent scan voor {asset}: {e}")
 
@@ -171,4 +183,16 @@ def run_agent_scan():
 
 
 if __name__ == '__main__':
-    run_agent_scan()
+    # Start de mini webserver op de achtergrond zodat Render een open poort ziet
+    threading.Thread(target=run_server, daemon=True).start()
+    print("🚀 Squeeze Agent Web Service gestart met ingebouwde health-check.")
+
+    # Continue loop die de scans periodiek uitvoert
+    while True:
+        try:
+            run_agent_scan()
+        except Exception as e:
+            print(f"⚠️ Fout in agent hoofdloop: {e}")
+        
+        # Wacht bijvoorbeeld 30 minuten tot de volgende scan
+        time.sleep(1800)
