@@ -495,7 +495,7 @@ def main():
     except Exception as e:
         print(f"⚠️ Kon getcoins.py niet uitvoeren of pushen: {e}. We gebruiken de bestaande CSV indien aanwezig.")
 
-    symbols_scope = get_combined_trading_symbols(top_n=5)
+    symbols_scope = get_combined_trading_assets(top_n=5)
 
     written = []
     for symbol in symbols_scope:
