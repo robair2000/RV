@@ -21,6 +21,7 @@ from sklearn.ensemble import RandomForestRegressor
 
 from github_utils import github_put
 from market_utils import fetch_ohlcv_paginated, fetch_cached_1d_shared
+from asset_utils import get_combined_trading_assets
 
 warnings.filterwarnings('ignore')
 logging.getLogger('xgboost').setLevel(logging.CRITICAL)
@@ -33,30 +34,6 @@ def push_file_to_github(filename):
         content = f.read()
     if github_put(filename, content, agent='v20-quant-worker'):
         print(f"☁️ Bestand {filename} succesvol gepusht naar GitHub.")
-
-
-# --- STAP 1: DYNAMISCHE ASSET SELECTIE ---
-def get_combined_trading_assets(top_n=1):
-    # Al je core-munten weer teruggezet
-    core_symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT']  
-    ranking_file = 'kucoin_best_coins_ranking.csv'
-    dynamic_symbols = []
-
-    if os.path.exists(ranking_file):
-        try:
-            df = pd.read_csv(ranking_file)
-            if 'Symbol' in df.columns:
-                # Pak alleen de allersterkste nummer 1 uit de ranking!
-                for s in df['Symbol'].head(1).tolist():
-                    if s not in dynamic_symbols and ':USDT' in s:
-                        dynamic_symbols.append(s)
-            print(f"📈 Dynamische nummer 1 ingeladen: {dynamic_symbols}")
-        except Exception as e:
-            print(f"⚠️ Fout bij lezen van ranking CSV in agent: {e}")
-
-    combined = list(dict.fromkeys(core_symbols + dynamic_symbols))
-    print(f"🎯 Actieve agent trading scope ({len(combined)} symbols): {combined}")
-    return combined
 
 
 # limit = hoeveel candles opgehaald worden (gepagineerd); lookback = max. trainingsvenster
@@ -495,7 +472,8 @@ def main():
     except Exception as e:
         print(f"⚠️ Kon getcoins.py niet uitvoeren of pushen: {e}. We gebruiken de bestaande CSV indien aanwezig.")
 
-    symbols_scope = get_combined_trading_assets(top_n=5)
+    # Gebruikt nu direct de centrale asset helper via asset_utils
+    symbols_scope = get_combined_trading_assets()
 
     written = []
     for symbol in symbols_scope:
