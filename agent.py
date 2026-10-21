@@ -186,14 +186,24 @@ def run_agent_scan():
 if __name__ == '__main__':
     # Start de mini webserver op de achtergrond zodat Render een open poort ziet
     threading.Thread(target=run_server, daemon=True).start()
-    print("🚀 Squeeze Agent Web Service gestart met ingebouwde health-check.")
+    print("🚀 Squeeze Agent Web Service gestart met ingebouwde candle-sync.")
 
-    # Continue loop die de scans periodiek uitvoert
+    CANDLE_SECONDS = 4 * 3600
+    SCAN_DELAY_SECONDS = 60  # Wacht 1 minuut na candle sluiting
+
+    def seconds_until_next_scan():
+        now = time.time()
+        next_close = (int(now // CANDLE_SECONDS) + 1) * CANDLE_SECONDS
+        return max(5, next_close + SCAN_DELAY_SECONDS - now)
+
+    # Continue loop die exact na elke candle-close scant
     while True:
         try:
+            print("🔍 Start gesynchroniseerde Squeeze Agent scan na candle close...")
             run_agent_scan()
         except Exception as e:
             print(f"⚠️ Fout in agent hoofdloop: {e}")
         
-        # Wacht 30 minuten tot de volgende scan
-        time.sleep(1800)
+        sleep_seconds = seconds_until_next_scan()
+        print(f"💤 Squeeze Agent wacht tot de volgende 4h candle cyclus (over {int(sleep_seconds // 60)} minuten)...")
+        time.sleep(sleep_seconds)
