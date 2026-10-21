@@ -14,17 +14,13 @@ from asset_utils import get_combined_trading_assets
 
 # --- Configuraties & Constanten ---
 META_HISTORY_4H = 2000
-META_1D_BARS = 450
 MIN_VOL_RATIO = 1.3
 SQUEEZE_PCTL = 0.35
-META_SL_ATR = 1.5
-META_TP_ATR = 3.0
 MIN_BOSS_SCORE = 75.0
 
 exchange = ccxt.kucoinfutures({'enableRateLimit': True})
 
 
-# --- Mini Webserver voor Render (Voorkomt 'No open ports detected' crash) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -37,7 +33,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def log_message(self, format, *args):
-        pass  # Voorkomt spam in de logs
+        pass
 
 
 def run_server():
@@ -55,7 +51,8 @@ def push_file_to_github(filename):
 
 
 def load_markov_state(asset):
-    path = f'markov_state_{asset.lower()}_4h.json'
+    # Gecorrigeerd naar het juiste bestandsformaat van markov.py
+    path = f'markov_4h_state_{asset.lower()}.json'
     if not os.path.exists(path):
         return {'green': 50.0, 'red': 50.0}, 1.0
     try:
@@ -74,7 +71,7 @@ def compute_indicators(df):
     high = df['high']
     low = df['low']
 
-    df['sma20'] = close.rolling(20).mean()  # Direct toevoegen aan het gefilterde dataframe!
+    df['sma20'] = close.rolling(20).mean()
     std20 = close.rolling(20).std()
     
     bb_width = (df['sma20'] + (std20 * 2) - (df['sma20'] - (std20 * 2))) / df['sma20']
@@ -87,37 +84,6 @@ def compute_indicators(df):
     df['atr_pct'] = (df['atr'] / close) * 100.0
 
     return df.dropna().reset_index(drop=True)
-
-
-def compute_primary_setups(d4, d1):
-    df = compute_indicators(d4)
-    if df.empty:
-        return pd.DataFrame()
-
-    setups = []
-    for i in range(50, len(df) - 1):  # Lopende candle uitsluiten
-        row = df.iloc[i]
-        
-        is_squeeze = row['bb_width_pctl'] <= SQUEEZE_PCTL
-        has_volume = row['vol_ratio'] >= MIN_VOL_RATIO
-        
-        if not (is_squeeze and has_volume):
-            continue
-
-        close = row['close']
-        sma20 = row['sma20']  # Nu pak je exact de juiste, uitgelijnde SMA van dezelfde row!
-        signal = 'long' if close > sma20 else 'short'
-
-        setups.append({
-            'timestamp': int(row['timestamp']),
-            'close': close,
-            'atr': row['atr'],
-            'signal': signal,
-            'bb_width_pctl': row['bb_width_pctl'],
-            'vol_ratio': row['vol_ratio']
-        })
-
-    return pd.DataFrame(setups)
 
 
 def run_agent_scan():
@@ -137,32 +103,48 @@ def run_agent_scan():
             d4 = fetch_ohlcv_paginated(exchange, symbol, '4h', total_bars=META_HISTORY_4H)
             if d4 is None or len(d4) < 100:
                 continue
+            
+            # Verwijder de actieve lopende candle zodat we alleen op gesloten candles werken
             d4 = d4.iloc[:-1].reset_index(drop=True)
+            if d4.empty:
+                continue
+
+            df = compute_indicators(d4)
+            if df.empty:
+                continue
 
             markov_probs, risk_mult = load_markov_state(asset)
-            setups = compute_primary_setups(d4, None)
 
             latest_signal = 'none'
             score = 50.0
             leverage = 2
 
-            if not setups.empty:
-                last_setup = setups.iloc[-1]
-                latest_signal = last_setup['signal']
-                score = 80.0
-                
-                # Basishefboom vermenigvuldigd met de Markov risk_multiplier (begrensd tussen 1x en 5x)
+            # Pak strikt de allergrootste/laatste gesloten bar van ons gefilterde dataframe
+            last_row = df.iloc[-1]
+            last_candle_ts = int(last_row['timestamp'])
+
+            is_squeeze = last_row['bb_width_pctl'] <= SQUEEZE_PCTL
+            has_volume = last_row['vol_ratio'] >= MIN_VOL_RATIO
+
+            if is_squeeze and has_volume:
+                close = last_row['close']
+                sma20 = last_row['sma20']
+                latest_signal = 'long' if close > sma20 else 'short'
+                score = 80.0 # Kan eventueel versterkt worden met Markov kansen
+
                 base_lev = 3 if score >= 85 else 2
                 leverage = int(np.clip(round(base_lev * risk_mult), 1, 5))
 
+            atr_pct_val = float(last_row['atr_pct']) if 'atr_pct' in last_row else 2.0
+
             state = {
                 'updated_at': time.time(),
-                'last_candle_ts': int(d4['timestamp'].iloc[-1]),
+                'last_candle_ts': last_candle_ts,
                 'pattern_signal': latest_signal,
                 'pattern_score': score,
                 'recommended_leverage': leverage,
                 'risk_multiplier': risk_mult,
-                'atr_pct': float(d4['atr_pct'].iloc[-1]) if 'atr_pct' in d4 else 2.0,
+                'atr_pct': atr_pct_val,
                 'min_score_required': MIN_BOSS_SCORE
             }
 
@@ -174,7 +156,6 @@ def run_agent_scan():
             written.append(filename)
             print(f"🚀 Squeeze Agent geüpdatet voor {asset}: signal={latest_signal}, lev={leverage} (risk_mult={risk_mult})")
 
-            # Cruciaal: rustpauze tussen munten om KuCoin rate limits (429) te voorkomen
             time.sleep(3.0)
 
         except Exception as e:
@@ -184,7 +165,6 @@ def run_agent_scan():
 
 
 if __name__ == '__main__':
-    # Start de mini webserver op de achtergrond zodat Render een open poort ziet
     threading.Thread(target=run_server, daemon=True).start()
     print("🚀 Squeeze Agent Web Service gestart met ingebouwde candle-sync.")
 
@@ -196,7 +176,6 @@ if __name__ == '__main__':
         next_close = (int(now // CANDLE_SECONDS) + 1) * CANDLE_SECONDS
         return max(5, next_close + SCAN_DELAY_SECONDS - now)
 
-    # Continue loop die exact na elke candle-close scant
     while True:
         try:
             print("🔍 Start gesynchroniseerde Squeeze Agent scan na candle close...")
