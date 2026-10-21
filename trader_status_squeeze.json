@@ -1,5 +1,5 @@
 {
-  "updated_at": 1792570265.6419075,
+  "updated_at": 1792571590.363328,
   "active_trades": {
     "ETH/USDT:USDT": {
       "side": "short",
@@ -52,9 +52,7 @@
       "protected_contracts": 9.0
     }
   },
-  "cooldowns": {
-    "ZEREBRO/USDT:USDT": 1792567934.4376554
-  },
+  "cooldowns": {},
   "last_traded_candles": {
     "ETH/USDT:USDT": 1792512000,
     "AVAX/USDT:USDT": 1792512000,
