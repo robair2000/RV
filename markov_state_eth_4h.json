@@ -1,9 +1,9 @@
 {
-  "updated_at": 1792580700.364969,
+  "updated_at": 1792580853.04608,
   "symbol": "ETH/USDT:USDT",
   "probabilities_next_4h": {
-    "green": 59.46,
-    "red": 40.54
+    "green": 58.87,
+    "red": 41.13
   },
-  "risk_multiplier": 0.88
+  "risk_multiplier": 0.87
 }
