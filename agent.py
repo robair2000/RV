@@ -51,7 +51,6 @@ def push_file_to_github(filename):
 
 
 def load_markov_state(asset):
-    # Gecorrigeerd naar het juiste bestandsformaat van markov.py
     path = f'markov_4h_state_{asset.lower()}.json'
     if not os.path.exists(path):
         return {'green': 50.0, 'red': 50.0}, 1.0
@@ -95,6 +94,7 @@ def run_agent_scan():
         push_file_to_github('kucoin_best_coins_ranking.csv')
     except Exception as e:
         print(f"⚠️ getcoins.py overgeslagen: {e}")
+        time.sleep(2.0)
 
     symbols = get_combined_trading_assets()
     written = []
@@ -105,6 +105,7 @@ def run_agent_scan():
             print(f"Bezig met ophalen en scannen van {symbol}...")
             d4 = fetch_ohlcv_paginated(exchange, symbol, '4h', total_bars=META_HISTORY_4H)
             if d4 is None or len(d4) < 100:
+                time.sleep(3.0)
                 continue
             
             # Verwijder de actieve lopende candle zodat we alleen op gesloten candles werken
@@ -122,8 +123,6 @@ def run_agent_scan():
             score = 50.0
             leverage = 2
 
-            # Pak strikt de allergrootste/laatste gesloten bar van ons gefilterde dataframe
-            # Pak strikt de allergrootste/laatste gesloten bar van ons gefilterde dataframe
             last_row = df.iloc[-1]
             last_candle_ts = int(last_row['timestamp'])
 
@@ -133,7 +132,6 @@ def run_agent_scan():
             if is_squeeze and has_volume:
                 pct_b = last_row['percent_b']
                 
-                # Echte uitbraak eisen via de Bollinger %B band-randen in plaats van de middelste lijn
                 if pct_b >= 0.90:
                     latest_signal = 'long'
                     score = 85.0
@@ -169,10 +167,12 @@ def run_agent_scan():
             written.append(filename)
             print(f"🚀 Squeeze Agent geüpdatet voor {asset}: signal={latest_signal}, lev={leverage} (risk_mult={risk_mult})")
 
-            time.sleep(3.0)
+            # Ruime pauze tussen munten om rate-limits (429) te voorkomen
+            time.sleep(6.0)
 
         except Exception as e:
             print(f"❌ Fout bij agent scan voor {asset}: {e}")
+            time.sleep(5.0)  # Extra adempauze bij fouten
 
     print(f"✅ Agent scan voltooid. {len(written)} bestanden bijgewerkt.")
 
