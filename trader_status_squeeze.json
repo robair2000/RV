@@ -1,5 +1,5 @@
 {
-  "updated_at": 1792556959.8306813,
+  "updated_at": 1792567426.93159,
   "active_trades": {
     "ETH/USDT:USDT": {
       "side": "short",
@@ -46,9 +46,9 @@
       "entry": 0.026454,
       "peak": 0.026454,
       "atr": 0.00052908,
-      "sl": 0.02724762,
+      "sl": 0.026429,
       "tp": 0.024866759999999998,
-      "breakeven_secured": false,
+      "breakeven_secured": true,
       "protected_contracts": 1512.0
     }
   },
