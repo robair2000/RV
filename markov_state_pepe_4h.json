@@ -1,9 +1,9 @@
 {
-  "updated_at": 1792569368.6654415,
+  "updated_at": 1792570317.130318,
   "symbol": "PEPE/USDT:USDT",
   "probabilities_next_4h": {
-    "green": 54.96,
-    "red": 45.04
+    "green": 54.73,
+    "red": 45.27
   },
   "risk_multiplier": 0.84
 }
