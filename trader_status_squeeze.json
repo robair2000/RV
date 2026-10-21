@@ -1,18 +1,9 @@
 {
-  "updated_at": 1792613112.4522557,
-  "active_trades": {
-    "AVAX/USDT:USDT": {
-      "side": "long",
-      "entry": 9.845,
-      "peak": 9.845,
-      "atr": 0.21090044097937757,
-      "sl": 9.528649338530935,
-      "tp": 10.477701322938133,
-      "breakeven_secured": false,
-      "protected_contracts": 60.0
-    }
+  "updated_at": 1792616989.0790696,
+  "active_trades": {},
+  "cooldowns": {
+    "AVAX/USDT:USDT": 1792616989.079064
   },
-  "cooldowns": {},
   "last_traded_candles": {
     "ETH/USDT:USDT": 1792512000,
     "AVAX/USDT:USDT": 1792584000,
