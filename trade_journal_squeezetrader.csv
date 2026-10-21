@@ -10,3 +10,4 @@ ts_iso,bot,event,symbol,side,price,amount,entry,sl,tp,est_gross_pnl_pct,est_fees
 2026-10-21T09:00:28+00:00,SQUEEZE_TRADER,exit_exchange,AVAX/USDT:USDT,short,9.671,,9.752,10.04456,9.16688,0.8306,0.12,0.7106,positie gesloten op exchange
 2026-10-21T12:16:10+00:00,SQUEEZE_TRADER,exit_exchange,ETH/USDT:USDT,short,2467.71,,2453.48,2527.0844,2306.2712,-0.58,0.12,-0.7,positie gesloten op exchange
 2026-10-21T12:16:12+00:00,SQUEEZE_TRADER,exit_exchange,LINK/USDT:USDT,short,12.395,,12.35,12.7205,11.609,-0.3644,0.12,-0.4844,positie gesloten op exchange
+2026-10-21T12:16:13+00:00,SQUEEZE_TRADER,exit_exchange,PEPE/USDT:USDT,short,4.5587e-06,,4.5519e-06,4.688457000000001e-06,4.2787860000000005e-06,-0.1494,0.12,-0.2694,positie gesloten op exchange
