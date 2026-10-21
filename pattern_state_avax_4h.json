@@ -1,7 +1,7 @@
 {
-  "updated_at": 1792539479.2034354,
-  "last_candle_ts": 1783872000000,
-  "pattern_signal": "long",
+  "updated_at": 1792541411.404771,
+  "last_candle_ts": 1792512000000,
+  "pattern_signal": "short",
   "pattern_score": 80.0,
   "recommended_leverage": 2,
   "risk_multiplier": 1.0,
