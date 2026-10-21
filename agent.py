@@ -74,8 +74,12 @@ def compute_indicators(df):
     df['sma20'] = close.rolling(20).mean()
     std20 = close.rolling(20).std()
     
-    bb_width = (df['sma20'] + (std20 * 2) - (df['sma20'] - (std20 * 2))) / df['sma20']
+    bb_upper = df['sma20'] + (std20 * 2)
+    bb_lower = df['sma20'] - (std20 * 2)
+    
+    bb_width = (bb_upper - bb_lower) / df['sma20']
     df['bb_width_pctl'] = bb_width.rolling(100).rank(pct=True)
+    df['percent_b'] = (close - bb_lower) / ((bb_upper - bb_lower) + 1e-8)
     
     df['vol_ratio'] = df['volume'] / (df['volume'].rolling(20).mean() + 1e-8)
     
@@ -84,7 +88,6 @@ def compute_indicators(df):
     df['atr_pct'] = (df['atr'] / close) * 100.0
 
     return df.dropna().reset_index(drop=True)
-
 
 def run_agent_scan():
     try:
