@@ -1,9 +1,9 @@
 {
-  "updated_at": 1792598369.9048135,
+  "updated_at": 1792598683.1410754,
   "symbol": "LINK/USDT:USDT",
   "probabilities_next_4h": {
-    "green": 47.45,
-    "red": 52.55
+    "green": 55.37,
+    "red": 44.63
   },
-  "risk_multiplier": 0.82
+  "risk_multiplier": 0.84
 }
