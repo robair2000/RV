@@ -1,5 +1,5 @@
 {
-  "updated_at": 1792571590.363328,
+  "updated_at": 1792572033.6403215,
   "active_trades": {
     "ETH/USDT:USDT": {
       "side": "short",
@@ -40,19 +40,11 @@
       "tp": 4.2787860000000005e-06,
       "breakeven_secured": false,
       "protected_contracts": 16.0
-    },
-    "JCT/USDT:USDT": {
-      "side": "short",
-      "entry": 0.0044279,
-      "peak": 0.0044279,
-      "atr": 8.8558e-05,
-      "sl": 0.0045607370000000005,
-      "tp": 0.004162226,
-      "breakeven_secured": false,
-      "protected_contracts": 9.0
     }
   },
-  "cooldowns": {},
+  "cooldowns": {
+    "JCT/USDT:USDT": 1792572033.6403155
+  },
   "last_traded_candles": {
     "ETH/USDT:USDT": 1792512000,
     "AVAX/USDT:USDT": 1792512000,
