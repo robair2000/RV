@@ -1,9 +1,9 @@
 {
-  "updated_at": 1792540177.7640908,
+  "updated_at": 1792541102.7974048,
   "symbol": "BTC/USDT:USDT",
   "probabilities_next_4h": {
-    "green": 49.42,
-    "red": 50.58
+    "green": 55.27,
+    "red": 44.73
   },
-  "risk_multiplier": 0.8
+  "risk_multiplier": 0.84
 }
