@@ -1,9 +1,7 @@
 {
-  "updated_at": 1792616989.0790696,
+  "updated_at": 1792620619.6748016,
   "active_trades": {},
-  "cooldowns": {
-    "AVAX/USDT:USDT": 1792616989.079064
-  },
+  "cooldowns": {},
   "last_traded_candles": {
     "ETH/USDT:USDT": 1792512000,
     "AVAX/USDT:USDT": 1792584000,
