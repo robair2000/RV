@@ -1,9 +1,9 @@
 {
-  "updated_at": 1792590992.1382542,
+  "updated_at": 1792591139.5673594,
   "symbol": "AVAX/USDT:USDT",
   "probabilities_next_4h": {
-    "green": 45.1,
-    "red": 54.9
+    "green": 44.93,
+    "red": 55.07
   },
   "risk_multiplier": 0.84
 }
