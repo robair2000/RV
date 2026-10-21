@@ -1,0 +1,20 @@
+{
+  "updated_at": 1792541882.757147,
+  "active_trades": {
+    "ETH/USDT:USDT": {
+      "side": "short",
+      "entry": 2453.48,
+      "peak": 2453.48,
+      "atr": 49.0696,
+      "sl": 2527.0844,
+      "tp": 2306.2712,
+      "breakeven_secured": false,
+      "protected_contracts": 1.0
+    }
+  },
+  "cooldowns": {},
+  "last_traded_candles": {
+    "ETH/USDT:USDT": 1792512000
+  },
+  "daily_guard": {}
+}
