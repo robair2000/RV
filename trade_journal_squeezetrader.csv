@@ -3,3 +3,4 @@ ts_iso,bot,event,symbol,side,price,amount,entry,sl,tp,est_gross_pnl_pct,est_fees
 2026-10-21T00:18:05+00:00,SQUEEZE_TRADER,entry_filled,AVAX/USDT:USDT,short,9.752,41.0,9.752,10.04456,9.16688,,,,score=80.0 lev=2 risk_mult=1.0 breakout
 2026-10-21T00:18:09+00:00,SQUEEZE_TRADER,entry_filled,LINK/USDT:USDT,short,12.35,32.0,12.35,12.7205,11.609,,,,score=80.0 lev=2 risk_mult=1.0 breakout
 2026-10-21T00:18:12+00:00,SQUEEZE_TRADER,entry_filled,PEPE/USDT:USDT,short,4.5519e-06,16.0,4.5519e-06,4.688457000000001e-06,4.2787860000000005e-06,,,,score=80.0 lev=2 risk_mult=1.0 breakout
+2026-10-21T04:29:18+00:00,SQUEEZE_TRADER,entry_filled,ZEREBRO/USDT:USDT,short,0.026454,1512.0,0.026454,0.02724762,0.024866759999999998,,,,score=80.0 lev=2 risk_mult=1.0 breakout
