@@ -94,7 +94,7 @@ def run_agent_scan():
         push_file_to_github('kucoin_best_coins_ranking.csv')
     except Exception as e:
         print(f"⚠️ getcoins.py overgeslagen: {e}")
-        time.sleep(2.0)
+        time.sleep(3.0)
 
     symbols = get_combined_trading_assets()
     written = []
@@ -103,9 +103,24 @@ def run_agent_scan():
         asset = symbol.split('/')[0].split(':')[0]
         try:
             print(f"Bezig met ophalen en scannen van {symbol}...")
-            d4 = fetch_ohlcv_paginated(exchange, symbol, '4h', total_bars=META_HISTORY_4H)
+            
+            # Robuuste fetch met retry-mechanisme en ruime pauzes tegen vastlopen/rate-limits
+            d4 = None
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    d4 = fetch_ohlcv_paginated(exchange, symbol, '4h', total_bars=META_HISTORY_4H)
+                    if d4 is not None and len(d4) >= 100:
+                        break
+                except Exception as fetch_err:
+                    print(f"⚠️ Poging {attempt + 1}/{max_retries} mislukt voor {symbol}: {fetch_err}")
+                
+                if attempt < max_retries - 1:
+                    time.sleep(6.0)
+
             if d4 is None or len(d4) < 100:
-                time.sleep(3.0)
+                print(f"❌ Onvoldoende data na {max_retries} pogingen voor {symbol}. Overslaan.")
+                time.sleep(4.0)
                 continue
             
             # Verwijder de actieve lopende candle zodat we alleen op gesloten candles werken
@@ -167,12 +182,12 @@ def run_agent_scan():
             written.append(filename)
             print(f"🚀 Squeeze Agent geüpdatet voor {asset}: signal={latest_signal}, lev={leverage} (risk_mult={risk_mult})")
 
-            # Ruime pauze tussen munten om rate-limits (429) te voorkomen
-            time.sleep(6.0)
+            # Zeer ruime pauze tussen munten om rate-limits (429) te voorkomen
+            time.sleep(8.0)
 
         except Exception as e:
             print(f"❌ Fout bij agent scan voor {asset}: {e}")
-            time.sleep(5.0)  # Extra adempauze bij fouten
+            time.sleep(6.0)  # Extra adempauze bij fouten
 
     print(f"✅ Agent scan voltooid. {len(written)} bestanden bijgewerkt.")
 
