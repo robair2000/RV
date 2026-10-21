@@ -1,0 +1,2 @@
+ts_iso,bot,event,symbol,side,price,amount,entry,sl,tp,est_gross_pnl_pct,est_fees_pct,est_net_pnl_pct,note
+2026-10-21T00:18:01+00:00,SQUEEZE_TRADER,entry_filled,ETH/USDT:USDT,short,2453.48,1.0,2453.48,2527.0844,2306.2712,,,,score=80.0 lev=2 risk_mult=1.0 breakout
