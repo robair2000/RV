@@ -8,3 +8,4 @@ ts_iso,bot,event,symbol,side,price,amount,entry,sl,tp,est_gross_pnl_pct,est_fees
 2026-10-21T08:11:04+00:00,SQUEEZE_TRADER,entry_filled,JCT/USDT:USDT,short,0.0044279,9.0,0.0044279,0.0045607370000000005,0.004162226,,,,score=80.0 lev=2 risk_mult=1.0 breakout
 2026-10-21T08:40:32+00:00,SQUEEZE_TRADER,exit_exchange,JCT/USDT:USDT,short,0.0044279,,0.0044279,0.0045607370000000005,0.004162226,-0.0,0.12,-0.12,positie gesloten op exchange
 2026-10-21T09:00:28+00:00,SQUEEZE_TRADER,exit_exchange,AVAX/USDT:USDT,short,9.671,,9.752,10.04456,9.16688,0.8306,0.12,0.7106,positie gesloten op exchange
+2026-10-21T12:16:03+00:00,SQUEEZE_TRADER,exit_exchange,ETH/USDT:USDT,short,2468.04,,2453.48,2527.0844,2306.2712,-0.5934,0.12,-0.7134,positie gesloten op exchange
