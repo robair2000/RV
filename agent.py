@@ -123,6 +123,7 @@ def run_agent_scan():
             leverage = 2
 
             # Pak strikt de allergrootste/laatste gesloten bar van ons gefilterde dataframe
+            # Pak strikt de allergrootste/laatste gesloten bar van ons gefilterde dataframe
             last_row = df.iloc[-1]
             last_candle_ts = int(last_row['timestamp'])
 
@@ -130,13 +131,22 @@ def run_agent_scan():
             has_volume = last_row['vol_ratio'] >= MIN_VOL_RATIO
 
             if is_squeeze and has_volume:
-                close = last_row['close']
-                sma20 = last_row['sma20']
-                latest_signal = 'long' if close > sma20 else 'short'
-                score = 80.0 # Kan eventueel versterkt worden met Markov kansen
+                pct_b = last_row['percent_b']
+                
+                # Echte uitbraak eisen via de Bollinger %B band-randen in plaats van de middelste lijn
+                if pct_b >= 0.90:
+                    latest_signal = 'long'
+                    score = 85.0
+                elif pct_b <= 0.10:
+                    latest_signal = 'short'
+                    score = 85.0
+                else:
+                    latest_signal = 'none'
+                    score = 50.0
 
-                base_lev = 3 if score >= 85 else 2
-                leverage = int(np.clip(round(base_lev * risk_mult), 1, 5))
+                if latest_signal != 'none':
+                    base_lev = 3 if score >= 85 else 2
+                    leverage = int(np.clip(round(base_lev * risk_mult), 1, 5))
 
             atr_pct_val = float(last_row['atr_pct']) if 'atr_pct' in last_row else 2.0
 
