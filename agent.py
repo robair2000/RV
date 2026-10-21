@@ -74,10 +74,10 @@ def compute_indicators(df):
     high = df['high']
     low = df['low']
 
-    sma20 = close.rolling(20).mean()
+    df['sma20'] = close.rolling(20).mean()  # Direct toevoegen aan het gefilterde dataframe!
     std20 = close.rolling(20).std()
     
-    bb_width = (sma20 + (std20 * 2) - (sma20 - (std20 * 2))) / sma20
+    bb_width = (df['sma20'] + (std20 * 2) - (df['sma20'] - (std20 * 2))) / df['sma20']
     df['bb_width_pctl'] = bb_width.rolling(100).rank(pct=True)
     
     df['vol_ratio'] = df['volume'] / (df['volume'].rolling(20).mean() + 1e-8)
@@ -105,11 +105,8 @@ def compute_primary_setups(d4, d1):
             continue
 
         close = row['close']
-        sma20 = d4['close'].rolling(20).mean().iloc[i]
+        sma20 = row['sma20']  # Nu pak je exact de juiste, uitgelijnde SMA van dezelfde row!
         signal = 'long' if close > sma20 else 'short'
-
-        # Markov filter is hier verwijderd: Markov blokkeert geen entries meer, 
-        # maar beïnvloedt straks puur de risk multiplier / leverage.
 
         setups.append({
             'timestamp': int(row['timestamp']),
