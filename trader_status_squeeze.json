@@ -1,5 +1,5 @@
 {
-  "updated_at": 1792573229.8804905,
+  "updated_at": 1792575672.3013108,
   "active_trades": {
     "ETH/USDT:USDT": {
       "side": "short",
@@ -33,7 +33,6 @@
     }
   },
   "cooldowns": {
-    "JCT/USDT:USDT": 1792572033.6403155,
     "AVAX/USDT:USDT": 1792573229.8804872
   },
   "last_traded_candles": {
