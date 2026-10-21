@@ -1,11 +1,7 @@
 {
-  "updated_at": 1792584974.9135077,
+  "updated_at": 1792588587.9149578,
   "active_trades": {},
-  "cooldowns": {
-    "ETH/USDT:USDT": 1792584972.0667617,
-    "LINK/USDT:USDT": 1792584973.416487,
-    "PEPE/USDT:USDT": 1792584974.9135017
-  },
+  "cooldowns": {},
   "last_traded_candles": {
     "ETH/USDT:USDT": 1792512000,
     "AVAX/USDT:USDT": 1792512000,
