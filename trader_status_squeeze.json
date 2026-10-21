@@ -1,5 +1,5 @@
 {
-  "updated_at": 1792541893.9967604,
+  "updated_at": 1792556959.8306813,
   "active_trades": {
     "ETH/USDT:USDT": {
       "side": "short",
@@ -40,6 +40,16 @@
       "tp": 4.2787860000000005e-06,
       "breakeven_secured": false,
       "protected_contracts": 16.0
+    },
+    "ZEREBRO/USDT:USDT": {
+      "side": "short",
+      "entry": 0.026454,
+      "peak": 0.026454,
+      "atr": 0.00052908,
+      "sl": 0.02724762,
+      "tp": 0.024866759999999998,
+      "breakeven_secured": false,
+      "protected_contracts": 1512.0
     }
   },
   "cooldowns": {},
@@ -47,7 +57,8 @@
     "ETH/USDT:USDT": 1792512000,
     "AVAX/USDT:USDT": 1792512000,
     "LINK/USDT:USDT": 1792512000,
-    "PEPE/USDT:USDT": 1792512000
+    "PEPE/USDT:USDT": 1792512000,
+    "ZEREBRO/USDT:USDT": 1792526400
   },
   "daily_guard": {}
 }
