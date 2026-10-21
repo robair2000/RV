@@ -1,9 +1,9 @@
 {
-  "updated_at": 1792599444.9193838,
+  "updated_at": 1792599739.5191545,
   "symbol": "SOL/USDT:USDT",
   "probabilities_next_4h": {
-    "green": 51.04,
-    "red": 48.96
+    "green": 54.24,
+    "red": 45.76
   },
-  "risk_multiplier": 0.81
+  "risk_multiplier": 0.83
 }
