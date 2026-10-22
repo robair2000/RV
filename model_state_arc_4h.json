@@ -1,0 +1,49 @@
+{
+    "state_version": 9,
+    "current_regime": "trending",
+    "active_features": [
+        "return_1",
+        "return_3",
+        "RSI",
+        "atr_ratio",
+        "bb_position",
+        "vol_ratio"
+    ],
+    "last_trained_timestamp": 1792627448.9819512,
+    "model_weights": {
+        "xgb": 0.3394251717740908,
+        "cat": 0.3413646429415752,
+        "rf": 0.319210185284334
+    },
+    "model_errors": {
+        "xgb": 0.03650710456100065,
+        "cat": 0.036299688590694705,
+        "rf": 0.03881903155994147
+    },
+    "baseline_error": 1.0473334075238787,
+    "last_prediction": 0.062134073245224054,
+    "last_prediction_price": 0.062134073245224054,
+    "predicted_return_pct": -1.7782872868302373,
+    "direction_probability": 48.67863464355469,
+    "signal": "none",
+    "signal_probability": 50.0,
+    "holdout_direction_accuracy": 0.475,
+    "holdout_direction_z": -0.7071067811865481,
+    "holdout_classifier_accuracy": 0.5033333333333333,
+    "holdout_samples": 600,
+    "joint_signal_accuracy": 0.48484848484848486,
+    "joint_signal_samples": 330,
+    "joint_signal_z": -0.31782086308186386,
+    "signal_frequency_pct": 55.00000000000001,
+    "expected_net_r": 0.4545454545454546,
+    "funding_rate": 0.0,
+    "open_interest": 0.0,
+    "atr": 0.0034922857142857143,
+    "atr_pct": 5.520614796765226,
+    "last_close": 0.063259,
+    "last_candle_ts": 1792612800000,
+    "data_status": "insufficient_data",
+    "stop_loss": 0.0,
+    "take_profit": 0.0,
+    "updated_at": 1792627448
+}
