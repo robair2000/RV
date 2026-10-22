@@ -1,6 +1,6 @@
 {
-  "updated_at": 1792670496.336921,
-  "last_candle_ts": 1792656000000,
+  "updated_at": 1792684903.4714549,
+  "last_candle_ts": 1792670400000,
   "pattern_signal": "none",
   "pattern_score": 50.0,
   "recommended_leverage": 1,
@@ -10,6 +10,6 @@
     "red": 44.96
   },
   "score_breakdown": {},
-  "atr_pct": 1.0901331994649937,
+  "atr_pct": 1.0879342826592449,
   "min_score_required": 75.0
 }
