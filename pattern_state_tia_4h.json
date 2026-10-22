@@ -1,15 +1,15 @@
 {
-  "pattern_score": 50.0,
+  "updated_at": 1792691053.1031556,
+  "last_candle_ts": 1792670400000,
   "pattern_signal": "none",
-  "twm_signal": "none",
-  "twm_score": 50.0,
+  "pattern_score": 50.0,
   "recommended_leverage": 1,
-  "recommended_trailing_mult": 2.5,
-  "min_score_required": 75.0,
-  "strictness_mode": "trend_pullback_with_auc_gate",
-  "atr_pct": 5.49,
-  "adx_4h": 21.52,
-  "volume_expansion_ratio": 1.11,
-  "last_candle_ts": 1791705600000,
-  "updated_at": 1792442619.752357
+  "risk_multiplier": 1.0,
+  "markov_probs": {
+    "green": 54.36,
+    "red": 45.64
+  },
+  "score_breakdown": {},
+  "atr_pct": 4.604932690375725,
+  "min_score_required": 75.0
 }
