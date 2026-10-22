@@ -9,7 +9,7 @@
         "bb_position",
         "vol_ratio"
     ],
-    "last_trained_timestamp": 1792613053.305274,
+    "last_trained_timestamp": 1792627443.28163,
     "model_weights": {
         "xgb": 0.3321685601341932,
         "cat": 0.3349949386236783,
@@ -21,8 +21,8 @@
         "rf": 0.017132444080976885
     },
     "baseline_error": 1.0094203314503196,
-    "last_prediction": 12.69879727746603,
-    "last_prediction_price": 12.69879727746603,
+    "last_prediction": null,
+    "last_prediction_price": null,
     "predicted_return_pct": 0.12455473835866589,
     "direction_probability": 51.32819366455078,
     "signal": "none",
@@ -41,9 +41,9 @@
     "atr": 0.22778571428571454,
     "atr_pct": 1.795992385758216,
     "last_close": 12.683,
-    "last_candle_ts": 1792598400000,
+    "last_candle_ts": 0,
     "data_status": "insufficient_data",
     "stop_loss": 0.0,
     "take_profit": 0.0,
-    "updated_at": 1792613053
+    "updated_at": 1792627443
 }
