@@ -1,15 +1,15 @@
 {
-  "updated_at": 1792691031.0156593,
-  "last_candle_ts": 1792670400000,
+  "updated_at": 1792699387.0558305,
+  "last_candle_ts": 1792684800000,
   "pattern_signal": "none",
   "pattern_score": 50.0,
   "recommended_leverage": 1,
   "risk_multiplier": 1.0,
   "markov_probs": {
-    "green": 54.51,
-    "red": 45.49
+    "green": 54.1,
+    "red": 45.9
   },
   "score_breakdown": {},
-  "atr_pct": 3.3054137203421194,
+  "atr_pct": 3.400848991497059,
   "min_score_required": 75.0
 }
